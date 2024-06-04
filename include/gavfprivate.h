@@ -18,12 +18,19 @@
 
 #define GAVF_PROTOCOL_STRING "GAVF/1.0"
 
+/* Metadata tags */
+
+#define GAVF_META_STREAM_URI        "stream-uri"
+#define GAVF_META_SEPARATE_STREAMS  "separate"
+
 typedef struct
   {
   int packet_flags;
   gavl_packet_buffer_t * buf;
-  gavl_io_t * io;
   gavf_t * g;
+  
+  gavl_io_t * io;
+  int server_fd;
   } gavf_stream_t;
 
 struct gavf_s
@@ -47,7 +54,6 @@ gavl_io_t * gavf_open_io(gavf_t * g, const char * uri, int wr);
 
 /* Packet-I/O */
 
-gavl_packet_t * gavf_packet_get_multiplex(void * priv);
 gavl_source_status_t gavf_packet_read_multiplex(void * priv, gavl_packet_t ** p);
 gavl_source_status_t gavf_packet_read_separate(void * priv, gavl_packet_t ** p);
 
@@ -55,6 +61,7 @@ gavl_source_status_t gavf_packet_read_multiplex_noncont(void * priv, gavl_packet
 gavl_source_status_t gavf_packet_read_separate_noncont(void * priv, gavl_packet_t ** p);
 
 
+gavl_packet_t * gavf_packet_get_multiplex(void * priv);
 gavl_sink_status_t gavf_packet_put_multiplex(void * priv, gavl_packet_t * p);
 gavl_sink_status_t gavf_packet_put_separate(void * priv, gavl_packet_t * p);
 

@@ -79,10 +79,7 @@ gavl_sink_status_t gavf_packet_put_separate(void * priv, gavl_packet_t * p)
   gavf_stream_t * gs;
   bg_media_sink_stream_t * s = priv;
   gs = s->user_data;
-
   return gavf_write_packet(gs->io, p, gs->packet_flags);
-    
-  
   }
 
 /* Read / Write packets */

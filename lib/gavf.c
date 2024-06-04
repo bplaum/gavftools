@@ -8,6 +8,11 @@
 #include <gavl/log.h>
 #define LOG_DOMAIN "gavf"
 
+#include <gavl/utils.h>
+
+#include <gavl/gavlsocket.h>
+
+
 gavf_t * gavf_create()
   {
   gavf_t * ret;
@@ -101,12 +106,18 @@ int gavf_open_read(gavf_t * g, const char * uri)
 
 int gavf_open_write(gavf_t * g, const char * uri)
   {
+  int io_flags;
   if(!(g->io = gavf_open_io(g, uri, 1)))
     return 0;
   
   g->flags |= FLAG_WRITE;
+
+  io_flags = gavl_io_get_flags(g->io);
+
+  if(io_flags & GAVL_IO_IS_LOCAL) // Or check for GAVL_IO_IS_UNIX_SOCKET?
+    g->flags |= FLAG_SEPARATE_STREAMS;
   
-  return 0;
+  return 1;
   }
 
 bg_media_sink_t * gavf_get_sink(gavf_t * g)
@@ -134,6 +145,44 @@ static void * create_stream_priv(gavf_t * g)
   return ret;
   }
 
+static void init_multiplex_write(gavf_t * g)
+  {
+  int i;
+  for(i = 0; i < g->sink.num_streams; i++)
+    {
+    gavf_stream_t * gs = g->sink.streams[i]->user_data;
+    gs->packet_flags |= PACKET_HAS_STREAM_ID;
+    gs->buf = gavl_packet_buffer_create(g->sink.streams[i]->s);
+
+    g->sink.streams[i]->psink_priv = gavl_packet_sink_create(gavf_packet_get_multiplex,
+                                                             gavf_packet_put_multiplex,
+                                                             &g->sink.streams[i]);
+    }
+  }
+
+static void init_separate_write(gavf_t * g)
+  {
+  int i;
+  for(i = 0; i < g->sink.num_streams; i++)
+    {
+    char * name;
+    char * stream_uri;
+    
+    gavf_stream_t * gs = g->sink.streams[i]->user_data;
+
+    gs->server_fd = gavl_unix_socket_create(&name, 1);
+
+    stream_uri = gavl_sprintf("%s://%s", GAVF_PROTOCOL, name);
+    
+    g->sink.streams[i]->psink_priv = gavl_packet_sink_create(NULL,
+                                                             gavf_packet_put_separate,
+                                                             &g->sink.streams[i]);
+    free(stream_uri);
+    free(name);
+    }
+  
+  }
+
 static int start_write(gavf_t * g)
   {
   gavl_io_t * io;
@@ -148,6 +197,11 @@ static int start_write(gavf_t * g)
     g->sink.streams[i]->user_data = create_stream_priv(g);
     g->sink.streams[i]->free_user_data = free_stream_priv;
     }
+
+  if(g->flags & FLAG_SEPARATE_STREAMS)
+    init_separate_write(g);
+  else
+    init_multiplex_write(g);
   
   /* Write program header and start packet chunk */
   
@@ -215,13 +269,14 @@ gavl_source_status_t gavf_demux_iteration(gavf_t * g)
   else
     {
     /* Skip */
-    
+    if((st = gavf_skip_packet(g->io, PACKET_HAS_STREAM_ID)) != GAVL_SOURCE_OK)
+      return st;
     }
-  
+  return GAVL_SOURCE_OK;
   }
 
 gavl_sink_status_t gavf_mux_iteration(gavf_t * g)
   {
-
+  return GAVL_SINK_ERROR;
   }
 
