@@ -28,6 +28,7 @@ gavf_writer_t * gavf_writer_create();
 #define GAVF_TAIL           "GAVFTAIL"
 #define GAVF_INDEX          "GAVFINDX"
 #define GAVF_TRACK          "GAVFTRAC"
+#define GAVF_MSG            "GAVFMESG"
 
 // GAVL_MSG_NS_GAVF
 
@@ -105,6 +106,7 @@ int gavf_reader_open(gavf_reader_t * g, const char * uri);
 int gavf_writer_open(gavf_writer_t * g, const char * uri);
 
 int gavf_reader_skip_packets(gavf_reader_t * g);
+int gavf_reader_select_track(gavf_reader_t * g, int t);
 
 int gavf_writer_send_media_info(gavf_writer_t * g, const gavl_dictionary_t * mi);
 
@@ -120,8 +122,16 @@ gavl_packet_sink_t * gavf_writer_get_packet_sink(gavf_writer_t * g,
 bg_msg_sink_t * gavf_writer_get_message_sink(gavf_writer_t * g,
                                              int stream);
 
-int gavf_writer_read_message(gavf_writer_t * wr, gavl_msg_t * ret, int timeout); 
+/* Messages through the backchannel */
+int gavf_writer_read_gavf_message(gavf_writer_t * wr, gavl_msg_t * ret, int timeout); 
+int gavf_reader_write_gavf_message(gavf_reader_t * rd, const gavl_msg_t * ret); 
 
+/* Messages through the forward channel */
+int gavf_reader_read_gavf_message(gavf_reader_t * rd, gavl_msg_t * ret, int timeout); 
+int gavf_writer_write_gavf_message(gavf_writer_t * wr, const gavl_msg_t * msg); 
+
+
+int gavf_writer_has_backchannel(gavf_writer_t * wr);
 
 bg_media_source_t * gavf_reader_get_source(gavf_reader_t * g);
 

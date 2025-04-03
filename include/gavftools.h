@@ -45,6 +45,9 @@
     .argv = &gavftools_dst_location,        \
   }
 
+#define GAVLTOOLS_OUT_BACKCHANNEL (1<<0)
+
+extern int gavftools_flags;
 
 extern char * gavftools_src_location;
 extern char * gavftools_dst_location;
@@ -56,18 +59,32 @@ extern char * gavftools_vs_actions;
 extern char * gavftools_ts_actions;
 extern char * gavftools_os_actions;
 
-typedef struct
+/* Codec options */
+extern char * gavftools_ac_options;
+extern char * gavftools_vc_options;
+extern char * gavftools_oc_options;
+
+typedef struct gavftools_stream_t 
   {
   bg_media_source_stream_t * src;
 
   gavl_audio_sink_t * asink;
   gavl_video_sink_t * vsink;
   gavl_packet_sink_t * psink;
+  bg_msg_sink_t * msink;
 
   int timescale;
   gavl_time_t time;
+  int64_t time_scaled;
+  
   int discont;
+
+  int (*process)(struct gavftools_stream_t * s);
+  
   } gavftools_stream_t;
+
+extern int num_gavftools_streams;
+extern gavftools_stream_t * gavftools_streams;
 
 void gavftools_init();
 int gavftools_open_sink();
@@ -76,3 +93,5 @@ int gavftools_init_src();
 int gavftools_init_sink(bg_media_source_t * src);
 
 int gavftools_handle_sink_message(void * data, gavl_msg_t * msg);
+
+int gavltools_iteration_st();

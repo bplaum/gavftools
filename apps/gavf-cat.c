@@ -52,11 +52,12 @@ int main(int argc, char ** argv)
   /* Initialize sink */
   if(!gavftools_init_sink(gavftools_src))
     return EXIT_FAILURE;
+
+  
   
   while(1)
     {
     /* Check for CTRL+C */
-    
     
     /* Handle sink messages */
     

@@ -28,7 +28,6 @@ typedef struct
   {
   gavl_packet_buffer_t * buf;
   gavf_reader_t * reader;     // Reader we belong to
-  
   gavl_io_t * io;
   } gavf_reader_stream_t;
 
@@ -47,6 +46,12 @@ typedef struct
   bg_msg_sink_t * msink;
 
   gavl_dictionary_t * s;
+
+  gavl_audio_frame_t * aframe;
+  gavl_video_frame_t * vframe;
+
+  gavl_packet_t * pkt;
+  gavl_packet_t pkt_priv;
   
   } gavf_writer_stream_t;
 

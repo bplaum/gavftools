@@ -44,6 +44,8 @@ int main(int argc, char ** argv)
     return EXIT_FAILURE;
 
   fprintf(stderr, "Loaded %s\n", gavftools_src_location);
+  gavl_dictionary_dump(gavftools_src->track, 2);
+  fprintf(stderr, "\n");
   
   return EXIT_SUCCESS;
   }

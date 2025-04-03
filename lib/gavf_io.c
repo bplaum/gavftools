@@ -40,6 +40,8 @@ static int server_handshake(gavl_io_t * io, int wr)
   
   gavl_http_response_init(&res, GAVF_PROTOCOL_STRING, 200, "OK");
   gavl_http_response_write(io, &res);
+
+  gavl_io_reset_position(io);
   
   ret = 1;
   fail:
@@ -62,14 +64,22 @@ static int client_handshake(gavl_io_t * io, int wr)
   gavl_http_request_init(&req, wr ? "PUT" : "GET",
                          "*", GAVF_PROTOCOL_STRING);
 
+  //  fprintf(stderr, "Client handshake, sending request:\n");
+  //  gavl_dictionary_dump(&req, 2);
+  
   if(!gavl_http_request_write(io, &req))
     goto fail;
 
   if(!gavl_http_response_read(io, &res))
     goto fail;
 
+  //  fprintf(stderr, "Client handshake, got response:\n");
+  //  gavl_dictionary_dump(&res, 2);
+  
   if(gavl_http_response_get_status_int(&res) != 200)
     goto fail;
+
+  gavl_io_reset_position(io);
   
   ret = 1;
   fail:
@@ -311,22 +321,30 @@ gavl_io_t * gavf_writer_open_io(gavf_writer_t * g, const char * uri1)
     gavl_dictionary_write(sub_io, &mi);
     gavl_chunk_finish_io(ret, &g->ch, sub_io);
     
+    //    gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Accepting connections..");
     fd = gavl_listen_socket_accept(server_fd, 3000, NULL);
+    //    gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Accepted connection: %d", fd);
+
     gavl_socket_close(server_fd);
 
     gavl_dictionary_free(&mi);
     
     if(fd < 0)
+      {
+      gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "Client didn't connect to %s", new_addr);
       goto fail;
-
+      }
     gavl_io_destroy(ret);
     
     ret = gavl_io_create_socket(fd, 3000, GAVL_IO_SOCKET_DO_CLOSE);
     if(!server_handshake(ret, 1))
+      {
+      gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "Server handshake failed");
       goto fail;   
-    
+      }
+    io_flags = gavl_io_get_flags(ret);
     }
-
+  
   if(io_flags & GAVL_IO_IS_REGULAR)
     g->flags |= FLAG_ON_DISK;
   if(io_flags & GAVL_IO_IS_SOCKET)

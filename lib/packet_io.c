@@ -1,12 +1,10 @@
 
 #include <string.h>
 
-
 #include <gavf.h>
 #include <gavfprivate.h>
 #include <gavl/connectors.h>
 #include <gavl/numptr.h>
-
 
 gavl_source_status_t gavf_packet_read_multiplex(void * priv, gavl_packet_t ** p)
   {
@@ -50,8 +48,8 @@ gavl_source_status_t gavf_packet_read_separate_noncont(void * priv, gavl_packet_
 
   if(!gavl_io_can_read(gs->io, 0))
     return GAVL_SOURCE_AGAIN;
-
-  return gavl_packet_source_read_packet(gavl_packet_buffer_get_source(gs->buf), p);
+  
+  return gavf_read_packet(gs->io, *p);
   }
 
 /* Sink */

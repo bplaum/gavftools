@@ -89,19 +89,11 @@ const bg_input_plugin_t the_plugin =
     },
     /* Open file/device */
     .open = open_gavf,
+
     //    .open_io = open_io_gavf,
-  /* For file and network plugins, this can be NULL */
+    
+    /* For file and network plugins, this can be NULL */
     .get_media_info = get_media_info_gavf,
-    //    .get_edl  = bg_avdec_get_edl,
-    
-    .get_src = get_src_gavf,
-
-    /* Return track information */
-    
-    //    .get_frame_table =       bg_avdec_get_frame_table,
-    
-    //    .skip_video =      bg_avdec_skip_video,
-
     .get_src = get_src_gavf,
     
     /* Stop playback, close all decoders */
