@@ -40,6 +40,7 @@ static int select_track(gavf_reader_t * g, gavl_msg_t * msg)
   
   return 1;
   }
+
 #if 0
 static int drain_read(gavf_reader_t * g)
   {
@@ -50,7 +51,6 @@ static int drain_read(gavf_reader_t * g)
   
   }
 #endif
-
 
 static void send_stream_action(gavf_reader_t * g,
                                gavl_stream_type_t type)
@@ -76,11 +76,8 @@ static void send_stream_action(gavf_reader_t * g,
       gavl_msg_write(&msg, g->bkch_io);
       gavl_msg_free(&msg);
       }
-    
     }
-    
   }
-
 
 #if 1
 static void free_stream_priv(void * user_data)
@@ -149,13 +146,13 @@ static int start_read(gavf_reader_t * g)
         {
         g->src.streams[i]->psrc_priv =                                                         
           gavl_packet_source_create(gavf_packet_read_separate,
-                                    g->src.streams[i], GAVL_SOURCE_SRC_ALLOC, g->src.streams[i]->s);
+                                    g->src.streams[i], 0, g->src.streams[i]->s);
         }
       else
         {
         g->src.streams[i]->psrc_priv =                                                         
           gavl_packet_source_create(gavf_packet_read_separate_noncont,
-                                    g->src.streams[i], GAVL_SOURCE_SRC_ALLOC, g->src.streams[i]->s);
+                                    g->src.streams[i], 0, g->src.streams[i]->s);
         }
       }
     else
@@ -187,9 +184,8 @@ static int start_read(gavf_reader_t * g)
     else if(g->src.streams[i]->action == BG_STREAM_ACTION_DECODE)
       {
       fprintf(stderr, "Requested decoding\n");
-      
       }
-
+    
     }
   
   /* Start decoders */
@@ -204,7 +200,30 @@ static int start_read(gavf_reader_t * g)
   }
 #endif
 
+static void seek_ondisk(gavf_reader_t * g, int64_t time_scaled, int scale)
+  {
+  int i;
+  
+  gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Seeking: %"PRId64" %d", time_scaled, scale);
 
+  bg_media_source_reset(&g->src);
+
+  for(i = 0; i < g->src.num_streams; i++)
+    {
+    gavf_reader_stream_t * s = g->src.streams[i]->user_data;
+
+    if(s->buf)
+      gavl_packet_buffer_clear(s->buf);
+
+    //    s->idx_pos = gavl_packet_index_seek(g->idx, s->stream_id, time_scaled);
+    //    s->idx_pos = gavl_packet_index_get_keyframe_before(b->demuxer->si, s->stream_id, s->index_position);
+
+    
+    }
+
+  
+  
+  }
 
 static int handle_msg_read(void * data, gavl_msg_t * msg)
   {
@@ -231,6 +250,17 @@ static int handle_msg_read(void * data, gavl_msg_t * msg)
           gavl_dictionary_t track;
           if(g->flags & FLAG_ON_DISK)
             {
+            while(gavl_chunk_read_header(g->io, &g->ch))
+              {
+              if(gavl_chunk_is(&g->ch, GAVF_PACKETS))
+                {
+                fprintf(stderr, "Got packets start\n");
+                break;
+                }
+              else
+                fprintf(stderr, "Didn't get packets start\n");
+              }
+            
             if(!bg_media_source_load_decoders(&g->src))
               {
               /* Error */
@@ -243,37 +273,39 @@ static int handle_msg_read(void * data, gavl_msg_t * msg)
             send_stream_action(g, GAVL_STREAM_VIDEO);
             send_stream_action(g, GAVL_STREAM_TEXT);
             send_stream_action(g, GAVL_STREAM_OVERLAY);
-            }
-          gavl_msg_init(&msg);
-          gavl_msg_set_id_ns(&msg, GAVL_CMD_SRC_START, GAVL_MSG_NS_SRC);
-          gavf_reader_write_gavf_message(g, &msg);
-          gavl_msg_free(&msg);
-          
-          /* Read actual header */
-          gavl_msg_init(&msg);
-          if(!gavf_reader_read_gavf_message(g, &msg, -1))
-            {
-            gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN,
-                     "Reading final track info failed");
-            
-            gavl_msg_free(&msg);
-            return 0;
-            }
-          if((msg.NS != GAVL_MSG_NS_SRC) ||
-             (msg.ID != GAVL_MSG_SRC_STARTED))
-            {
-            gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN,
-                     "Unexpected message: %d %d", msg.NS, msg.ID);
-            gavl_msg_free(&msg);
-            return 0;
-            }
-          fprintf(stderr, "Got final header\n");
 
-          gavl_dictionary_init(&track);
-          gavl_msg_get_arg_dictionary(&msg, 0, &track);
-          gavl_track_merge(g->src.track, &track);
-          gavl_dictionary_free(&track);
-          gavl_msg_free(&msg);
+            gavl_msg_init(&msg);
+            gavl_msg_set_id_ns(&msg, GAVL_CMD_SRC_START, GAVL_MSG_NS_SRC);
+            gavf_reader_write_gavf_message(g, &msg);
+            gavl_msg_free(&msg);
+          
+            /* Read actual header */
+            gavl_msg_init(&msg);
+            if(!gavf_reader_read_gavf_message(g, &msg, -1))
+              {
+              gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN,
+                       "Reading final track info failed");
+            
+              gavl_msg_free(&msg);
+              return 0;
+              }
+            if((msg.NS != GAVL_MSG_NS_SRC) ||
+               (msg.ID != GAVL_MSG_SRC_STARTED))
+              {
+              gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN,
+                       "Unexpected message: %d %d", msg.NS, msg.ID);
+              gavl_msg_free(&msg);
+              return 0;
+              }
+            fprintf(stderr, "Got final header\n");
+
+            gavl_dictionary_init(&track);
+            gavl_msg_get_arg_dictionary(&msg, 0, &track);
+            gavl_track_merge(g->src.track, &track);
+            gavl_dictionary_free(&track);
+            gavl_msg_free(&msg);
+
+            }
 
           /* Initialize sources */
           
@@ -287,9 +319,11 @@ static int handle_msg_read(void * data, gavl_msg_t * msg)
           {
           if(g->flags & FLAG_ON_DISK)
             {
-            //            int64_t time = gavl_msg_get_arg_long(msg, 0);
-            //            int scale = gavl_msg_get_arg_int(msg, 1);
+            int64_t time = gavl_msg_get_arg_long(msg, 0);
+            int scale = gavl_msg_get_arg_int(msg, 1);
 
+            seek_ondisk(g, time, scale);
+            
             return 1;
             }
           }
@@ -400,12 +434,99 @@ int gavf_reader_open(gavf_reader_t * g, const char * uri)
   if(g->bkch_io)
     g->flags |= FLAG_SEPARATE_STREAMS;
   
-  /* TODO: Read footer */
+  /* Read footer */
   if(gavl_io_can_seek(g->io))
     {
-    //    int64_t pos = gavl_io_position(g->io);
+    int64_t footer_start;
+    int64_t header_start;
+    
+    int64_t pos = gavl_io_position(g->io);
 
     /* Read footer */
+    gavl_io_seek(g->io, -16, SEEK_END);
+
+    if(gavf_read_backpointer(g->io, GAVF_TAIL,
+                             &footer_start))
+      {
+      gavl_io_seek(g->io, footer_start, SEEK_SET);
+
+      /* Check for concatenated file */
+
+      if(gavf_read_backpointer(g->io, GAVF_FOOTER,
+                                &header_start))
+        {
+        gavl_chunk_t ch;
+
+        gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Got footer at %"PRId64, footer_start);
+
+        if(header_start > 0)
+          gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Concatenated file found");
+
+        while(1)
+          {
+          if(!gavl_chunk_read_header(g->io, &ch))
+            break;
+
+          if(gavl_chunk_is(&ch, GAVF_INDEX))
+            {
+            g->idx = gavl_packet_index_create(0);
+            
+            if(!gavl_packet_index_read(g->idx, g->io))
+              break;
+
+            gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Got packet index: %d packets",
+                     g->idx->num_entries);
+            }
+          else if(gavl_chunk_is(&ch, GAVF_TAIL))
+            break;
+          else
+            gavl_io_skip(g->io, ch.len);
+          }
+
+        }
+      
+      }
+
+    gavl_io_seek(g->io, pos, SEEK_SET);
+    
+    }
+  
+  /* Set seek flag */
+  if(g->idx)
+    {
+    int i, num_tracks;
+    int j, num_streams;
+    
+    gavl_dictionary_t * s;
+    gavl_dictionary_t * track;
+    gavl_dictionary_t * m;
+    gavl_stream_stats_t stats;
+    int id;
+    
+    num_tracks = gavl_get_num_tracks(&g->mi);
+    
+    for(i = 0; i < num_tracks; i++)
+      {
+      if((track = gavl_get_track_nc(&g->mi, i)) &&
+         (m = gavl_track_get_metadata_nc(track)))
+        {
+
+        num_streams = gavl_track_get_num_streams_all(track);
+
+        for(j = 0; j < num_streams; j++)
+          {
+          s = gavl_track_get_stream_all_nc(track, j);
+
+          gavl_stream_get_id(s, &id);
+          gavl_stream_stats_init(&stats);
+          gavl_packet_index_set_stream_stats(g->idx, id, &stats);
+          gavl_stream_set_stats(s, &stats);
+          }
+        
+        gavl_dictionary_set_int(m, GAVL_META_CAN_SEEK, 1);
+        gavl_dictionary_set_int(m, GAVL_META_CAN_PAUSE, 1);
+        }
+      }
     }
   
   ret = 1;
@@ -435,10 +556,57 @@ int gavf_writer_open(gavf_writer_t * g, const char * uri)
   
   if(g->bkch_io)
     g->flags |= FLAG_SEPARATE_STREAMS;
+
+  if(g->flags & FLAG_ON_DISK)
+    g->idx = gavl_packet_index_create(0);
   
   return 1;
   }
 
+void gavf_writer_flush(gavf_writer_t * g)
+  {
+  int64_t footer_start_pos;
+  
+  if((g->flags & FLAG_ON_DISK) && g->idx)
+    {
+    gavl_chunk_t chunk;
+    
+    gavl_chunk_finish(g->io, &g->ch, 1);
+
+    footer_start_pos = gavl_io_position(g->io);
+    
+    gavf_write_backpointer(g->io, GAVF_FOOTER, g->header_start_pos);
+    
+    /* Index */
+    gavl_chunk_start(g->io, &chunk, GAVF_INDEX);
+    gavl_packet_index_write(g->idx, g->io);
+    gavl_chunk_finish(g->io, &chunk, 1);
+
+    /* Possibly some other stuff */
+    
+    /* Tail: Last 16 bytes of the file */
+    gavf_write_backpointer(g->io, GAVF_TAIL, footer_start_pos);
+    
+    }
+  }
+
+void gavf_writer_destroy(gavf_writer_t * g)
+  {
+  gavf_writer_flush(g);
+  if(g->io)
+    gavl_io_destroy(g->io);
+  if(g->idx)
+    gavl_packet_index_destroy(g->idx);
+
+  gavl_dictionary_free(&g->mi);
+
+  if(g->bkch_io)
+    gavl_io_destroy(g->bkch_io);
+  if(g->bkch_hub)
+    bg_msg_hub_destroy(g->bkch_hub);
+  
+  free(g);
+  }
 
 bg_media_source_t * gavf_reader_get_source(gavf_reader_t * g)
   {
@@ -448,13 +616,10 @@ bg_media_source_t * gavf_reader_get_source(gavf_reader_t * g)
 
 void gavf_reader_destroy(gavf_reader_t * g)
   {
-  
+  bg_controllable_cleanup(&g->ctrl);
+  free(g);
   }
 
-void gavf_writer_destroy(gavf_writer_t * g)
-  {
-  
-  }
 
 gavl_source_status_t gavf_demux_iteration(gavf_reader_t * g)
   {
@@ -467,22 +632,21 @@ gavl_source_status_t gavf_demux_iteration(gavf_reader_t * g)
   if((st = gavf_read_packet_header(g->io, &header)) != GAVL_SOURCE_OK)
     return st;
 
-  if(header.id == GAVL_META_STREAM_ID_MSG_GAVF)
-    {
-    /* TODO: Maybe read and report message */
-    return GAVL_SOURCE_EOF;
-    }
-  
   if(((s = bg_media_source_get_stream_by_id(&g->src, header.id))) &&
      (s->action != BG_STREAM_ACTION_OFF))
     {
+    gavl_packet_sink_t * sink;
     gavf_reader_stream_t * gs;
     /* Read packet */
     gavl_packet_t * p;
     gs = s->user_data;
-    p = gavl_packet_sink_get_packet(gavl_packet_buffer_get_sink(gs->buf));
-    if((st = gavf_read_packet(g->io, p)) != GAVL_SOURCE_OK)
+    
+    sink = gavl_packet_buffer_get_sink(gs->buf);
+    p = gavl_packet_sink_get_packet(sink);
+    if((st = gavf_read_packet_data(g->io, p, &header)) != GAVL_SOURCE_OK)
       return st;
+    
+    gavl_packet_sink_put_packet(sink, p);
     }
   else
     {
@@ -532,7 +696,6 @@ int gavf_writer_reset(gavf_reader_t * g, int msg_id)
   return 0;
   }
 
-
 static int create_packet_sink(gavf_writer_t * g, gavf_writer_stream_t * s)
   {
   if(g->flags & FLAG_SEPARATE_STREAMS)
@@ -543,8 +706,7 @@ static int create_packet_sink(gavf_writer_t * g, gavf_writer_stream_t * s)
     {
     /* Multiplex */
     s->packet_flags |= PACKET_HAS_STREAM_ID;
-    s->buf = gavl_packet_buffer_create(s->s);
-    s->psink = gavl_packet_sink_create(gavf_packet_get_multiplex, gavf_packet_put_multiplex, s);
+    s->psink = gavl_packet_sink_create(NULL, gavf_packet_put_multiplex, s);
     }
   return 1;
   }
@@ -678,6 +840,71 @@ static int create_video_sink(gavf_writer_t * g, gavf_writer_stream_t * s, gavl_v
   return 1;
   }
 
+static int handle_msg_writer(void * data, gavl_msg_t * msg)
+  {
+  gavf_writer_stream_t * st = data;
+
+  gavl_packet_t p;
+
+  gavl_packet_init(&p);
+  
+  gavl_msg_to_packet(msg, &p);
+
+  gavl_packet_sink_put_packet(st->psink, &p);
+  gavl_packet_free(&p);
+  return 1;
+  }
+
+static const char * metadata_clean_fields[] =
+  {
+    GAVL_META_SRC,
+    GAVL_META_HASH,
+    GAVL_META_APPROX_DURATION,
+    GAVL_META_WIDTH,
+    GAVL_META_HEIGHT,
+    GAVL_META_AUDIO_CHANNELS,
+    GAVL_META_AUDIO_SAMPLERATE,
+    NULL
+  }; 
+
+/* For on-disk streams, the seek and pause fields are cleared,
+   for piped streams we propagate them from the source */
+
+static const char * metadata_clean_fields_file[] =
+  {
+    GAVL_META_CAN_SEEK,
+    GAVL_META_CAN_PAUSE,
+    NULL
+  }; 
+
+static void clean_track(gavl_dictionary_t * dict, int file)
+  {
+  gavl_dictionary_t * m = gavl_track_get_metadata_nc(dict);
+
+  if(m)
+    {
+    gavl_dictionary_delete_fields(m, metadata_clean_fields);
+
+    if(file)
+      gavl_dictionary_delete_fields(m, metadata_clean_fields_file);
+    
+    }
+
+  }
+
+static void clean_media_info(gavl_dictionary_t * dict, int file)
+  {
+  int num, i;
+  gavl_dictionary_t * track;
+  
+  num = gavl_get_num_tracks(dict);
+
+  for(i = 0; i < num; i++)
+    {
+    if((track = gavl_get_track_nc(dict, i)))
+      clean_track(track, file);
+    }
+  }
 
 int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
   {
@@ -694,6 +921,8 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
   m_dst = gavl_track_get_metadata_nc(g->track);
   gavl_dictionary_copy(m_dst, m_src);
 
+  clean_track(g->track, !!(g->flags & FLAG_ON_DISK));
+  
   /* Count and allocate streams */
   for(i = 0; i < src->num_streams; i++)
     {
@@ -708,14 +937,27 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
   /* Set up streams */
   for(i = 0; i < src->num_streams; i++)
     {
+    gavl_compression_info_t ci;
+    
     if(src->streams[i]->action == BG_STREAM_ACTION_OFF)
       continue;
 
     g->streams[idx].s = gavl_track_append_stream(g->track, src->streams[i]->type);
+    g->streams[idx].writer = g;
     
     m_dst = gavl_stream_get_metadata_nc(g->streams[idx].s);
     m_src = gavl_stream_get_metadata(src->streams[i]->s);
     gavl_dictionary_copy(m_dst, m_src);
+
+    gavl_stream_get_id(src->streams[i]->s, &g->streams[idx].stream_id);
+    gavl_stream_set_id(g->streams[idx].s, g->streams[idx].stream_id);
+    
+    gavl_compression_info_init(&ci);
+    if(gavl_stream_get_compression_info(src->streams[i]->s, &ci))
+      {
+      gavl_stream_set_compression_info(g->streams[i].s, &ci);
+      gavl_compression_info_free(&ci);
+      }
     
     switch(src->streams[i]->type)
       {
@@ -760,7 +1002,8 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
       case GAVL_STREAM_MSG:
         if(src->streams[i]->msghub)
           {
-          
+          g->streams[idx].msink = bg_msg_sink_create(handle_msg_writer, &g->streams[idx], 1);
+          create_packet_sink(g, &g->streams[idx]);
           }
         else if(src->streams[i]->psrc)
           create_packet_sink(g, &g->streams[idx]);
@@ -789,8 +1032,6 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
       free(name);
       }
     }
-  else
-    gavl_chunk_start(g->io, &g->ch, GAVF_PACKETS);
   
   if(g->bkch_io)
     {
@@ -810,6 +1051,12 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
 
     fprintf(stderr, "Sent final track info\n");
     
+    }
+  else
+    {
+    if(!gavf_writer_send_track_info(g, g->track))
+      return 0;
+    gavl_chunk_start(g->io, &g->ch, GAVF_PACKETS);
     }
 
   /* Wait for the stream sockets to connect */
@@ -837,10 +1084,43 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
 int gavf_writer_send_media_info(gavf_writer_t * g, const gavl_dictionary_t * mi)
   {
   gavl_io_t * sub_io;
+  gavl_dictionary_t mi_priv;
+  gavl_dictionary_init(&mi_priv);
+
+  gavl_dictionary_copy(&mi_priv, mi);
+  clean_media_info(&mi_priv, !!(g->flags & FLAG_ON_DISK));
+
+  g->header_start_pos = gavl_io_position(g->io);
+  
   sub_io = gavl_chunk_start_io(g->io, &g->ch, GAVF_HEADER);
-  if(!gavl_dictionary_write(sub_io, mi))
+  if(!gavl_dictionary_write(sub_io, &mi_priv))
+    {
+    gavl_dictionary_free(&mi_priv);
     return 0;
+    }
   gavl_chunk_finish_io(g->io, &g->ch, sub_io);
+  gavl_dictionary_free(&mi_priv);
+  
+  return 1;
+  }
+
+int gavf_writer_send_track_info(gavf_writer_t * g, const gavl_dictionary_t * ti)
+  {
+  gavl_io_t * sub_io;
+  gavl_dictionary_t mi_priv;
+  gavl_dictionary_init(&mi_priv);
+
+  gavl_append_track(&mi_priv, ti);
+  clean_media_info(&mi_priv, !!(g->flags & FLAG_ON_DISK));
+  
+  sub_io = gavl_chunk_start_io(g->io, &g->ch, GAVF_HEADER);
+  if(!gavl_dictionary_write(sub_io, &mi_priv))
+    {
+    gavl_dictionary_free(&mi_priv);
+    return 0;
+    }
+  gavl_chunk_finish_io(g->io, &g->ch, sub_io);
+  gavl_dictionary_free(&mi_priv);
   return 1;
   }
 
@@ -933,4 +1213,41 @@ bg_msg_sink_t * gavf_writer_get_message_sink(gavf_writer_t * g,
   {
   gavf_writer_stream_t * s = &g->streams[stream];
   return s->msink;
+  }
+
+int gavf_write_backpointer(gavl_io_t * io, const char * eightcc,
+                           int64_t pos)
+  {
+  /* Relative offset */
+  int64_t offset;
+  
+  gavl_io_align_write(io);
+
+  offset = pos - (gavl_io_position(io) + 16);
+  
+  return ((gavl_io_write_data(io, (const uint8_t*)eightcc, 8) == 8) &&
+          gavl_io_write_int64f(io, offset));
+  }
+
+int gavf_read_backpointer(gavl_io_t * io, const char * eightcc,
+                          int64_t * pos)
+  {
+  int64_t offset;
+  uint8_t probe_data[8];
+
+  gavl_io_align_read(io);
+  
+  if((gavl_io_get_data(io, probe_data, 8) == 8) &&
+     !memcmp(eightcc, probe_data, 8))
+    {
+    if((gavl_io_read_data(io, probe_data, 8) < 8) ||
+       !gavl_io_read_int64f(io, &offset))
+      return 0;
+    
+    /* Relative offset -> absolute offset */
+    *pos = gavl_io_position(io) + offset;
+    return 1;
+    }
+  else
+    return 0;
   }

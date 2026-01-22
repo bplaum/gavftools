@@ -53,19 +53,17 @@ gavl_source_status_t gavf_packet_read_separate_noncont(void * priv, gavl_packet_
   }
 
 /* Sink */
-gavl_packet_t * gavf_packet_get_multiplex(void * priv)
-  {
-  gavf_writer_stream_t * gs = priv;
-  return gavl_packet_sink_get_packet(gavl_packet_buffer_get_sink(gs->buf));
-  }
 
 gavl_sink_status_t gavf_packet_put_multiplex(void * priv, gavl_packet_t * p)
   {
   gavf_writer_stream_t * gs = priv;
+  p->id = gs->stream_id;
+  /* Build packet index */
+  p->position = gavl_io_position(gs->writer->io) - gs->writer->header_start_pos;
   
-  gavl_packet_sink_put_packet(gavl_packet_buffer_get_sink(gs->buf), p);
-  /* Flush packets */
-  return gavf_mux_iteration(gs->writer);
+  gavl_packet_index_add_packet(gs->writer->idx, p);
+  
+  return gavf_write_packet(gs->writer->io, p, gs->packet_flags);
   }
 
 gavl_sink_status_t gavf_packet_put_separate(void * priv, gavl_packet_t * p)
@@ -88,7 +86,9 @@ gavl_source_status_t gavf_read_packet_header(gavl_io_t * io,
 
   if(!gavl_io_read_uint32v(io, &packet_flags))
     return GAVL_SOURCE_EOF;
-  
+
+  //  fprintf(stderr, "Got packet flags: %08x\n", packet_flags);
+  p->flags = packet_flags;
   if((packet_flags & PACKET_HAS_STREAM_ID) &&
      !gavl_io_read_32_be(io, (uint32_t*)&p->id))
     return GAVL_SOURCE_EOF;
@@ -165,13 +165,13 @@ gavl_sink_status_t gavf_write_packet_header(gavl_io_t * io,
      !gavl_io_write_32_be(io, p->id))
     return GAVL_SINK_ERROR;
   
-  if((packet_flags & PACKET_HAS_PTS) && !gavl_io_write_int64v(io, p->pts))
+  if((packet_flags & PACKET_HAS_PTS)              && !gavl_io_write_int64v(io, p->pts))
     return GAVL_SINK_ERROR;
-  if((packet_flags & PACKET_HAS_DURATION) && !gavl_io_write_int64v(io, p->duration))
+  if((packet_flags & PACKET_HAS_DURATION)         && !gavl_io_write_int64v(io, p->duration))
     return GAVL_SINK_ERROR;
-  if((packet_flags & PACKET_HAS_FIELD2_OFFSET) && !gavl_io_write_uint32v(io, p->field2_offset))
+  if((packet_flags & PACKET_HAS_FIELD2_OFFSET)    && !gavl_io_write_uint32v(io, p->field2_offset))
     return GAVL_SINK_ERROR;
-  if((packet_flags & PACKET_HAS_HEADER_SIZE) && !gavl_io_write_uint32v(io, p->header_size))
+  if((packet_flags & PACKET_HAS_HEADER_SIZE)      && !gavl_io_write_uint32v(io, p->header_size))
     return GAVL_SINK_ERROR;
   if((packet_flags & PACKET_HAS_SEQUENCE_END_POS) && !gavl_io_write_uint32v(io, p->sequence_end_pos))
     return GAVL_SINK_ERROR;
@@ -225,7 +225,7 @@ gavl_source_status_t gavf_read_packet_data(gavl_io_t * io,
     memcpy(&p->ext_data, &tmp.ext_data, sizeof(tmp.ext_data));
     }
   
-  if(gavl_io_read_uint32v(io, &size))
+  if(!gavl_io_read_uint32v(io, &size))
     return GAVL_SOURCE_EOF;
 
   gavl_buffer_alloc(&p->buf, size);
@@ -235,6 +235,7 @@ gavl_source_status_t gavf_read_packet_data(gavl_io_t * io,
   else
     {
     p->buf.len = size;
+    
     return GAVL_SOURCE_OK;
     }
   }
@@ -263,8 +264,6 @@ gavl_source_status_t gavf_read_packet(gavl_io_t * io,
   return gavf_read_packet_data(io, p, p);
   }
 
-
-
 gavl_sink_status_t gavf_write_packet(gavl_io_t * io,
                                      gavl_packet_t * p,
                                      int stream_flags)
@@ -276,5 +275,4 @@ gavl_sink_status_t gavf_write_packet(gavl_io_t * io,
     return st;
   
   return gavf_write_packet_data(io, p);
-  
   }

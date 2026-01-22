@@ -130,7 +130,9 @@ static gavl_io_t * open_socket(char * uri, int wr)
     
     if(!gavl_socket_address_set(addr, name, port, SOCK_STREAM))
       goto fail;
-    
+    gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Listening to %s port %d\n",
+             name, port);
+                 
     server_fd = gavl_listen_socket_create_inet(addr, port, 1, 0);
     socket_fd = gavl_listen_socket_accept(server_fd, -1, NULL);
     gavl_socket_close(server_fd);
@@ -223,7 +225,6 @@ gavl_io_t * gavf_reader_open_io(gavf_reader_t * g, const char * uri1)
         
         ret = gavl_io_create_file(f, 0, (st.st_mode & S_IFMT)==S_IFREG, 1);
         }
-
       }
     }
 
@@ -242,14 +243,12 @@ gavl_io_t * gavf_reader_open_io(gavf_reader_t * g, const char * uri1)
   return ret;
   }
 
+
 gavl_io_t * gavf_writer_open_io(gavf_writer_t * g, const char * uri1)
   {
   int io_flags;
   gavl_io_t * ret;
   char * uri;
-  char * parent = NULL;
-  const char * pos;
-
   
   if(uri1 && gavl_string_starts_with_i(uri1, "file://"))
     uri1 += 7;
@@ -260,33 +259,27 @@ gavl_io_t * gavf_writer_open_io(gavf_writer_t * g, const char * uri1)
     ret = gavl_io_create_file(stdout, 1, 0, 0);
   else 
     {
+    FILE * f;
+
     if(!(ret = open_socket(uri, 1)))
       {
       struct stat st;
+
+      /* File already exists: Check for file type
+         (could be a fifo as well) */
       
       if(!stat(uri, &st))
         {
-        FILE * f;
         if(!(f = fopen(uri, "w")))
           goto fail;
         
-        ret = gavl_io_create_file(f, 1, (st.st_mode & S_IFMT)==S_IFREG, 1);
+        ret = gavl_io_create_file(f, 1, (st.st_mode & S_IFMT) == S_IFREG, 1);
         }
-      
-      if(!(pos = strrchr(uri, '/')))
-        parent = gavl_strdup(".");
       else
         {
-        parent = gavl_strdup(uri);
-        parent[(int)(pos - uri)] = '\0';
+        f = fopen(uri, "w");
+        ret = gavl_io_create_file(f, 1, 0, 0);
         }
-      
-      if(!access(parent, W_OK))
-        {
-        FILE * out = fopen(uri, "w");
-        gavl_io_create_file(out, 1, 0, 0);
-        }
-      
       }
     }
 
@@ -357,132 +350,4 @@ gavl_io_t * gavf_writer_open_io(gavf_writer_t * g, const char * uri1)
   
   return ret;
   }
-
-#if 0
-gavl_io_t * gavf_open_io(gavf_reader_t * g, const char * uri1, int wr)
-  {
-  gavl_io_t * ret;
-  char * name = NULL;
-  char * uri = gavl_strdup(uri1);
-  struct stat st;
-  int io_flags;
-  
-  if(!uri || !gavl_string_starts_with(uri, GAVF_PROTOCOL"://-"))
-    {
-    if(wr)
-      ret = gavl_io_create_file(stdout, 1, 0, 0);
-    else
-      ret = gavl_io_create_file(stdin, 0, 0, 0);
-    }
-  else if(gavl_string_starts_with(uri, GAVF_PROTOCOL_SERVER":///"))
-    {
-    int server_fd;
-    /* Unix server */
-    server_fd = gavl_listen_socket_create_unix(strstr(uri, ":///") + 2, 1);
-    g->socket_fd = gavl_listen_socket_accept(server_fd, timeout, NULL);
-    gavl_socket_close(server_fd);
-    
-    if(g->socket_fd < 0)
-      goto fail;
-
-    ret = gavl_io_create_socket(g->socket_fd, timeout, 0);
-
-    if(!server_handshake(ret, wr))
-      goto fail;
-    
-    }
-  else if(gavl_string_starts_with(uri, GAVF_PROTOCOL_SERVER"://"))
-    {
-    int server_fd;
-    int port = -1;
-    /* TCP server */
-    addr = gavl_socket_address_create();
-
-    if(!gavl_url_split(uri, NULL, NULL, NULL, &name, &port, NULL))
-      goto fail;
-
-    if(port < 0)
-      port = 0;
-    
-    if(!gavl_socket_address_set(addr, name, port, SOCK_STREAM))
-      goto fail;
-    
-    server_fd = gavl_listen_socket_create_inet(addr, port, 1, 0);
-    g->socket_fd = gavl_listen_socket_accept(server_fd, timeout, NULL);
-    gavl_socket_close(server_fd);
-    
-    ret = gavl_io_create_socket(g->socket_fd, timeout, 0);
-
-    if(!server_handshake(ret, wr))
-      goto fail;
-
-    }
-  else if(gavl_string_starts_with(uri, GAVF_PROTOCOL":///"))
-    {
-    /* Unix client */
-    if(!gavl_url_split(uri, NULL, NULL, NULL, NULL, NULL, &name))
-      goto fail;
-    
-    g->socket_fd = gavl_socket_connect_unix(name);
-    ret = gavl_io_create_socket(g->socket_fd, timeout, 0);
-
-    if(!client_handshake(ret, wr))
-      goto fail;
-
-    }
-  else if(gavl_string_starts_with(uri, GAVF_PROTOCOL"://"))
-    {
-    int port;
-    addr = gavl_socket_address_create();
-    /* TCP client */
-    if(!gavl_url_split(uri, NULL, NULL, NULL, &name, &port, NULL))
-      goto fail;
-
-    if(!gavl_socket_address_set(addr, name, port, SOCK_STREAM))
-      goto fail;
-    
-    g->socket_fd = gavl_socket_connect_inet(addr, timeout);
-    ret = gavl_io_create_socket(g->socket_fd, timeout, 0);
-    
-    if(!client_handshake(ret, wr))
-      goto fail;
-    
-    }
-  /* Check for local file */
-  else if(!stat(uri, &st))
-    {
-    FILE * f = fopen(uri, wr ? "w" : "r");
-    ret = gavl_io_create_file(f, wr, 1, 1);
-    }
-  else
-    {
-    gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "Don't know how to open %s", uri1);
-    goto fail;
-    }
-  
-  /* If we have a writable pipe: Redirect to UNIX socket. */
-
-  if(io_flags & GAVL_IO_IS_REGULAR)
-    g->flags |= FLAG_ON_DISK;
-  else if(g->socket_fd >= 0)
-    {
-    g->bkch_io = gavl_io_create_socket(g->socket_fd, 3000, 0);
-    }
-
-  
-  goto cleanup;
-  
-  fail:
-  gavl_io_destroy(ret);
-  ret = NULL;
-
-  cleanup:
-
-  if(name)
-    free(name);
-  
-  return ret;
-  }
-#endif
-
 

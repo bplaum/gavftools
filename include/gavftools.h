@@ -11,30 +11,6 @@
     .help_arg = "<location>",               \
     .help_string = TRS("Source to decode"), \
     .argv = &gavftools_src_location,        \
-  }, \
-  { \
-    .arg = "-as",                            \
-    .help_arg = "<options>",               \
-      .help_string = TRS("Audio modes: A string of r (read packets), d (decode) or m (mute)"), \
-    .argv = &gavftools_as_actions,        \
-  },              \
-  { \
-    .arg = "-vs",                            \
-    .help_arg = "<options>",               \
-    .help_string = TRS("Video modes: A string of r (read packets), d (decode) or m (mute)"), \
-    .argv = &gavftools_vs_actions,        \
-  },              \
-  { \
-    .arg = "-ts",                            \
-    .help_arg = "<options>",               \
-     .help_string = TRS("Text modes: A string of r (read packets) or m (mute)"), \
-    .argv = &gavftools_ts_actions,        \
-  },              \
-  { \
-    .arg = "-os",                            \
-    .help_arg = "<options>",               \
-     .help_string = TRS("Overlay stream modes: A string of r (read packets), d (decode) or m (mute)"), \
-    .argv = &gavftools_ts_actions,        \
   }
 
 #define GAVFTOOLS_OPT_DST                   \
@@ -54,15 +30,14 @@ extern char * gavftools_dst_location;
 
 extern bg_media_source_t * gavftools_src;
 
-extern char * gavftools_as_actions;
-extern char * gavftools_vs_actions;
-extern char * gavftools_ts_actions;
-extern char * gavftools_os_actions;
-
 /* Codec options */
 extern char * gavftools_ac_options;
 extern char * gavftools_vc_options;
 extern char * gavftools_oc_options;
+
+#define STREAM_DISCONT         (1<<0)
+#define STREAM_HAVE_SINK_FRAME (1<<1)
+#define STREAM_HAVE_SRC_FRAME  (1<<2)
 
 typedef struct gavftools_stream_t 
   {
@@ -77,9 +52,14 @@ typedef struct gavftools_stream_t
   gavl_time_t time;
   int64_t time_scaled;
   
-  int discont;
+  int flags;
+  
+  gavl_source_status_t last_status;
+  
+  gavl_source_status_t (*process)(struct gavftools_stream_t * s);
 
-  int (*process)(struct gavftools_stream_t * s);
+  gavl_packet_t      * pkt;
+  gavl_video_frame_t * vframe;
   
   } gavftools_stream_t;
 
@@ -91,7 +71,8 @@ int gavftools_open_sink();
 
 int gavftools_init_src();
 int gavftools_init_sink(bg_media_source_t * src);
-
 int gavftools_handle_sink_message(void * data, gavl_msg_t * msg);
 
-int gavltools_iteration_st();
+gavl_source_status_t gavltools_iteration_singlethread();
+
+void gavftools_cleanup(void );

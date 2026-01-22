@@ -1,4 +1,6 @@
 
+#include <gavl/packetindex.h>
+
 /* Packet flags */
 #define PACKET_HAS_PTS              (GAVL_PACKET_FLAG_PRIV<<0)
 #define PACKET_HAS_DURATION         (GAVL_PACKET_FLAG_PRIV<<1)
@@ -16,30 +18,29 @@
 #define FLAG_ON_DISK          (1<<2)
 #define FLAG_BACKCHANNEL      (1<<3)
 
-
 #define GAVF_PROTOCOL_STRING "GAVF/1.0"
 
 /* Metadata tags */
-
-#define GAVF_META_STREAM_URI        "stream-uri"
-#define GAVF_META_SEPARATE_STREAMS  "separate-streams"
 
 typedef struct
   {
   gavl_packet_buffer_t * buf;
   gavf_reader_t * reader;     // Reader we belong to
   gavl_io_t * io;
+
+  int idx_pos; // Used only for seeking
+
   } gavf_reader_stream_t;
 
 typedef struct
   {
   int packet_flags;
-  gavl_packet_buffer_t * buf;
   gavf_writer_t * writer;
   
   gavl_io_t * io;
   int server_fd;
-
+  int stream_id;
+  
   gavl_audio_sink_t * asink;
   gavl_video_sink_t * vsink;
   gavl_packet_sink_t * psink;
@@ -52,7 +53,7 @@ typedef struct
 
   gavl_packet_t * pkt;
   gavl_packet_t pkt_priv;
-  
+
   } gavf_writer_stream_t;
 
 struct gavf_reader_s
@@ -68,14 +69,14 @@ struct gavf_reader_s
   gavl_io_t * bkch_io;
   bg_msg_sink_t * bkch_sink;
   
+  gavl_packet_index_t * idx;
   };
 
 struct gavf_writer_s
   {
   gavl_dictionary_t mi;
   gavl_dictionary_t * track;
-  
-  
+ 
   int flags;
   gavl_io_t * io;
   gavl_chunk_t ch;
@@ -86,7 +87,21 @@ struct gavf_writer_s
   gavf_writer_stream_t * streams;
   int num_streams;
 
+  gavl_packet_index_t * idx;
+
+  /* File positions */
+  int64_t header_start_pos;
+  
   };
+
+int gavf_write_backpointer(gavl_io_t * io,
+                           const char * eightcc,
+                           int64_t offset);
+
+int gavf_read_backpointer(gavl_io_t * io,
+                          const char * eightcc,
+                          int64_t * offset);
+
 
 gavl_source_status_t gavf_demux_iteration(gavf_reader_t * g);
 gavl_sink_status_t gavf_mux_iteration(gavf_writer_t * g);
@@ -97,6 +112,8 @@ gavl_io_t * gavf_writer_open_io(gavf_writer_t * g, const char * uri);
 int gavf_writer_finish_track(gavf_writer_t * g);
 
 void gavf_writer_set_from_source(gavf_writer_t * g, bg_media_source_t * src);
+
+void gavf_writer_flush(gavf_writer_t * g);
 
 /* Packet-I/O */
 
@@ -125,7 +142,6 @@ gavl_sink_status_t gavf_write_packet_data(gavl_io_t * io,
 gavl_source_status_t gavf_read_packet_data(gavl_io_t * io,
                                            gavl_packet_t * p,
                                            const gavl_packet_t * header);
-
 
 gavl_source_status_t gavf_read_packet(gavl_io_t * io,
                                       gavl_packet_t * p);

@@ -10,11 +10,12 @@ gavf_writer_t * gavf_writer_create();
 
 /*
  * URIs:
+ *
  * -:                                  Pipe (will be redirected to UNIX sockets)
  * gavf-server://0.0.0.0               TCP Server
  * gavf-server:///path-to-UNIX-socket  Unix domain server
  * gavf://host:port                    TCP Client
- * gavf:///path-to-UNIX-socket         TCP Client
+ * gavf:///path-to-UNIX-socket         Unix domain Client
  * 
  * file.gavf: On disk file
  */
@@ -26,7 +27,7 @@ gavf_writer_t * gavf_writer_create();
 #define GAVF_PACKETS        "GAVFPACK"
 #define GAVF_FOOTER         "GAVFFOOT"
 #define GAVF_TAIL           "GAVFTAIL"
-#define GAVF_INDEX          "GAVFINDX"
+#define GAVF_INDEX          GAVF_TAG_PACKET_INDEX
 #define GAVF_TRACK          "GAVFTRAC"
 #define GAVF_MSG            "GAVFMESG"
 
@@ -60,7 +61,7 @@ gavf_writer_t * gavf_writer_create();
   S->C GAVL packets...
 
   Possile end scenarios:
-  S->C GAVF_END_ (EOF)
+  S->C GAVF_END (EOF)
   S: Disconnect
 
   Possile end scenarios:
@@ -83,7 +84,7 @@ gavf_writer_t * gavf_writer_create();
 /*
  * On Disk layout of a single track:
  *
- * GAVFINFO
+ * GAVFHEAD
  * Media info (contains a media info with a single track inside)
  *
  * GAVFPACK
@@ -109,6 +110,7 @@ int gavf_reader_skip_packets(gavf_reader_t * g);
 int gavf_reader_select_track(gavf_reader_t * g, int t);
 
 int gavf_writer_send_media_info(gavf_writer_t * g, const gavl_dictionary_t * mi);
+int gavf_writer_send_track_info(gavf_writer_t * g, const gavl_dictionary_t * ti);
 
 int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src);
 int gavf_writer_reset(gavf_reader_t * g, int msg_id);

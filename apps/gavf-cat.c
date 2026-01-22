@@ -52,18 +52,25 @@ int main(int argc, char ** argv)
   /* Initialize sink */
   if(!gavftools_init_sink(gavftools_src))
     return EXIT_FAILURE;
-
-  
-  
+ 
   while(1)
     {
     /* Check for CTRL+C */
+    if(bg_got_sigint())
+      break;
     
     /* Handle sink messages */
     
     /* Handle media transfers */
     
+    if(gavltools_iteration_singlethread() == GAVL_SOURCE_EOF)
+      {
+      gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Got EOF");
+      break;
+      }
     }
+
+  gavftools_cleanup();
   
   return EXIT_SUCCESS;
   }
