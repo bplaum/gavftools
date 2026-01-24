@@ -7,7 +7,7 @@
 
 #include <gavl/gavl.h>
 #include <gavl/log.h>
-#define LOG_DOMAIN "gavf-read"
+#define LOG_DOMAIN "gavf-cat"
 
 #include <gmerlin/translation.h>
 #include <gmerlin/cmdline.h>
@@ -52,7 +52,10 @@ int main(int argc, char ** argv)
   /* Initialize sink */
   if(!gavftools_init_sink(gavftools_src))
     return EXIT_FAILURE;
- 
+
+  gavftools_run();
+  
+#if 0 
   while(1)
     {
     /* Check for CTRL+C */
@@ -63,13 +66,14 @@ int main(int argc, char ** argv)
     
     /* Handle media transfers */
     
-    if(gavltools_iteration_singlethread() == GAVL_SOURCE_EOF)
+    if(gavftools_iteration_singlethread(NULL) == GAVL_SOURCE_EOF)
       {
       gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Got EOF");
       break;
       }
     }
-
+#endif
+  
   gavftools_cleanup();
   
   return EXIT_SUCCESS;

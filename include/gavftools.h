@@ -4,6 +4,8 @@
 #include <gavf.h>
 
 /* Code common to most commadline tools */
+/* Since this is used for commandline tools
+   exclusively, we make heavy use of global variables */
 
 #define GAVFTOOLS_OPT_SRC \
   {                                         \
@@ -21,7 +23,8 @@
     .argv = &gavftools_dst_location,        \
   }
 
-#define GAVLTOOLS_OUT_BACKCHANNEL (1<<0)
+#define GAVFTOOLS_OUT_BACKCHANNEL (1<<0)
+#define GAVFTOOLS_MULTI_THREAD    (1<<1)
 
 extern int gavftools_flags;
 
@@ -39,7 +42,24 @@ extern char * gavftools_oc_options;
 #define STREAM_HAVE_SINK_FRAME (1<<1)
 #define STREAM_HAVE_SRC_FRAME  (1<<2)
 
-typedef struct gavftools_stream_t 
+#define THREAD_STATE_INIT     0
+#define THREAD_STATE_RUNNING  1
+#define THREAD_STATE_STOP     2
+#define THREAD_STATE_EOF      3
+#define THREAD_STATE_FINISHED 4
+
+typedef struct
+  {
+  gavl_source_status_t (*process_func)(void * data);
+  void * data;
+
+  pthread_mutex_t mutex;
+  int state;
+
+  pthread_t thread;
+  } gavftools_thread_t;
+
+typedef struct gavftools_stream_s
   {
   bg_media_source_stream_t * src;
 
@@ -55,24 +75,34 @@ typedef struct gavftools_stream_t
   int flags;
   
   gavl_source_status_t last_status;
-  
-  gavl_source_status_t (*process)(struct gavftools_stream_t * s);
+  /* Process one packet / frame */
+  gavl_source_status_t (*process)(struct gavftools_stream_s * s);
 
   gavl_packet_t      * pkt;
   gavl_video_frame_t * vframe;
+
+  gavftools_thread_t thread;
   
   } gavftools_stream_t;
 
 extern int num_gavftools_streams;
 extern gavftools_stream_t * gavftools_streams;
 
-void gavftools_init();
-int gavftools_open_sink();
+void gavftools_init(void);
+int gavftools_open_sink(void);
 
-int gavftools_init_src();
+int gavftools_init_src(void);
 int gavftools_init_sink(bg_media_source_t * src);
-int gavftools_handle_sink_message(void * data, gavl_msg_t * msg);
+int gavftools_handle_sink_message(gavl_msg_t * msg);
 
-gavl_source_status_t gavltools_iteration_singlethread();
 
-void gavftools_cleanup(void );
+void gavftools_cleanup(void);
+
+gavl_source_status_t gavftools_iteration_singlethread(void * data);
+gavl_source_status_t gavftools_iteration_multithread(void * data);
+
+void gavftools_start(void);
+void gavftools_stop(void);
+
+void gavftools_run(void);
+

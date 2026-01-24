@@ -5,9 +5,12 @@
 #include <gmerlin/pluginregistry.h>
 #include <gmerlin/utils.h>
 
+#include <gavl/log.h>
+#define LOG_DOMAIN "gavftools"
+
 char * gavftools_src_location = NULL;
 char * gavftools_dst_location = NULL;
-int gavftoools_flags = 0;
+int gavftools_flags = 0;
 
 /* Source */
 bg_media_source_t * gavftools_src = NULL;
@@ -23,6 +26,8 @@ gavftools_stream_t * gavftools_streams = NULL;
 
 static pthread_mutex_t out_time_mutex = PTHREAD_MUTEX_INITIALIZER;
 static gavl_time_t out_time = GAVL_TIME_UNDEFINED;
+
+static gavftools_thread_t gavftools_thread = { 0 };
 
 static void set_out_time(gavl_time_t t)
   {
@@ -104,7 +109,7 @@ int gavftools_init_src()
     gavftools_src_location = GAVF_PROTOCOL"://-";
 
   /* Interactive opening */
-  if(gavftoools_flags & GAVLTOOLS_OUT_BACKCHANNEL)
+  if(gavftools_flags & GAVFTOOLS_OUT_BACKCHANNEL)
     {
     gavl_dictionary_t * mi;
     mi = bg_plugin_registry_load_media_info(bg_plugin_reg, gavftools_src_location, 0);
@@ -234,7 +239,7 @@ int gavftools_open_sink()
     return 0;
 
   if(gavf_writer_has_backchannel(gavftools_writer))
-    gavftoools_flags |= GAVLTOOLS_OUT_BACKCHANNEL;
+    gavftools_flags |= GAVFTOOLS_OUT_BACKCHANNEL;
   
   return 1;
   }
@@ -324,13 +329,6 @@ static gavl_source_status_t process_stream_video_discont(gavftools_stream_t * s)
   
   return GAVL_SOURCE_OK;
   }
-
-#if 0
-static int process_stream_message(gavftools_stream_t * s)
-  {
-  return 1;
-  }
-#endif
 
 static gavl_source_status_t process_stream_packet(gavftools_stream_t * s)
   {
@@ -482,7 +480,7 @@ int gavftools_init_sink(bg_media_source_t * src)
   return 1;
   }
 
-int gavftools_handle_sink_message(void * data, gavl_msg_t * msg)
+int gavftools_handle_sink_message(gavl_msg_t * msg)
   {
   switch(msg->NS)
     {
@@ -491,9 +489,9 @@ int gavftools_handle_sink_message(void * data, gavl_msg_t * msg)
       switch(msg->ID)
         {
         case GAVL_CMD_SRC_SELECT_TRACK:
-          
           break;
         case GAVL_CMD_SRC_SEEK:
+          fprintf(stderr, "Got seek command\n");
           break;
         case GAVL_CMD_SRC_START:
           break;
@@ -528,7 +526,7 @@ static gavl_source_status_t process_stream(gavftools_stream_t * st)
   return GAVL_SOURCE_OK;
   }
 
-gavl_source_status_t gavltools_iteration_singlethread()
+gavl_source_status_t gavftools_iteration_singlethread(void * data)
   {
   int i;
   int num_eof = 0;
@@ -579,7 +577,7 @@ gavl_source_status_t gavltools_iteration_singlethread()
     num_eof++;
     if(num_gavftools_streams == num_eof)
       {
-      fprintf(stderr, "EOF 2\n");
+      //      fprintf(stderr, "EOF 2\n");
       return GAVL_SOURCE_EOF;
       }
     }
@@ -593,3 +591,131 @@ void gavftools_cleanup(void)
     gavf_writer_destroy(gavftools_writer);
   
   }
+
+static void * thread_func(void * data)
+  {
+  gavftools_thread_t * th = data;
+
+  gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Started processing thread");
+  
+  while(1)
+    {
+    pthread_mutex_lock(&th->mutex);
+    if(th->state == THREAD_STATE_STOP)
+      {
+      pthread_mutex_unlock(&th->mutex);
+      break;
+      }
+    pthread_mutex_unlock(&th->mutex);
+    
+    if(th->process_func(th->data) == GAVL_SOURCE_EOF)
+      {
+      pthread_mutex_lock(&th->mutex);
+      th->state = THREAD_STATE_EOF;
+      pthread_mutex_unlock(&th->mutex);
+      break;
+      }
+    }
+
+  gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Ending processing thread");
+  
+  return NULL;
+  }
+
+static void thread_start(gavftools_thread_t * th)
+  {
+  pthread_create(&th->thread, NULL, thread_func, th);
+  pthread_mutex_lock(&th->mutex);
+  th->state = THREAD_STATE_RUNNING;
+  pthread_mutex_unlock(&th->mutex);
+  }
+
+static void thread_stop(gavftools_thread_t * th)
+  {
+  pthread_mutex_lock(&th->mutex);
+
+  switch(th->state)
+    {
+    case THREAD_STATE_RUNNING:
+      th->state = THREAD_STATE_STOP;
+      break;
+    case THREAD_STATE_EOF:
+      break;
+    case THREAD_STATE_STOP:
+      break;
+    case THREAD_STATE_INIT:
+    case THREAD_STATE_FINISHED:
+      /* Thread isn't running */
+      pthread_mutex_unlock(&th->mutex);
+      return;
+      break;
+    }
+  pthread_mutex_unlock(&th->mutex);
+
+  pthread_join(th->thread, NULL);
+  
+  pthread_mutex_lock(&th->mutex);
+  th->state = THREAD_STATE_FINISHED;
+  pthread_mutex_unlock(&th->mutex);
+  
+  }
+
+void gavftools_start(void)
+  {
+  if(gavftools_flags & GAVFTOOLS_MULTI_THREAD)
+    {
+    
+    }
+  else
+    {
+    gavftools_thread.process_func = gavftools_iteration_singlethread;
+    pthread_mutex_init(&gavftools_thread.mutex, 0);
+    thread_start(&gavftools_thread);
+    }
+  }
+
+void gavftools_stop(void)
+  {
+  if(gavftools_flags & GAVFTOOLS_MULTI_THREAD)
+    {
+    
+    }
+  else
+    {
+    thread_stop(&gavftools_thread);
+    
+    }
+  }
+
+void gavftools_run(void)
+  {
+  gavl_msg_t msg;
+  int result;
+  gavftools_start();
+
+  gavl_msg_init(&msg);
+  
+  while(1)
+    {
+    if(bg_got_sigint())
+      break;
+
+    if(gavftools_flags & GAVFTOOLS_OUT_BACKCHANNEL)
+      {
+      result = gavf_writer_read_gavf_message(gavftools_writer, &msg, 0);
+      
+      if(result < 0)
+        break; /* Backchannel disconnected: Assume sink just died */
+
+      else if(result > 0)
+        {
+        if(!gavftools_handle_sink_message(&msg))
+          break;
+        }
+      }
+    }
+  
+  gavftools_stop();
+  }
+
+

@@ -200,35 +200,60 @@ static int start_read(gavf_reader_t * g)
   }
 #endif
 
-static void seek_ondisk(gavf_reader_t * g, int64_t time_scaled, int scale)
+static void seek_ondisk(gavf_reader_t * g, int64_t t, int scale)
   {
   int i;
+  int idx_pos;
+  int idx_pos_min = -1;
+  int stream_scale;
   
-  gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Seeking: %"PRId64" %d", time_scaled, scale);
+  int64_t time_scaled;
 
-  bg_media_source_reset(&g->src);
+  const gavl_dictionary_t * m;
+  
+  gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Seeking: %"PRId64" %d", t, scale);
 
   for(i = 0; i < g->src.num_streams; i++)
     {
     gavf_reader_stream_t * s = g->src.streams[i]->user_data;
 
+    if(g->src.streams[i]->action == BG_STREAM_ACTION_OFF)
+      continue;
+    
+    if(!(m = gavl_stream_get_metadata(g->src.streams[i]->s)) ||
+       !gavl_dictionary_get_int(m, GAVL_META_STREAM_PACKET_TIMESCALE, &stream_scale))
+      return;
+
+    time_scaled = gavl_time_rescale(scale, stream_scale, t);
+    
     if(s->buf)
       gavl_packet_buffer_clear(s->buf);
-
-    //    s->idx_pos = gavl_packet_index_seek(g->idx, s->stream_id, time_scaled);
-    //    s->idx_pos = gavl_packet_index_get_keyframe_before(b->demuxer->si, s->stream_id, s->index_position);
-
     
+    if((idx_pos = gavl_packet_index_seek(g->idx, g->src.streams[i]->stream_id, time_scaled)) < 0)
+      continue;
+    
+    idx_pos = gavl_packet_index_get_keyframe_before(g->idx, g->src.streams[i]->stream_id,
+                                                    idx_pos);
+    
+    fprintf(stderr, "Stream: %d, index_pos: %d\n", i, idx_pos);
+    
+    if((idx_pos_min < 0) || (idx_pos < idx_pos_min))
+      idx_pos_min = idx_pos;
     }
 
+  if(idx_pos_min < 0)
+    idx_pos_min = 0;
   
+  gavl_io_seek(g->io, g->idx->entries[idx_pos_min].position, SEEK_SET);
+
+  bg_media_source_reset(&g->src);
   
   }
 
 static int handle_msg_read(void * data, gavl_msg_t * msg)
   {
   gavf_reader_t * g = data;
-
+  
   //  int do_resync = 0;
   //  int do_restart = 0;
   
@@ -243,7 +268,6 @@ static int handle_msg_read(void * data, gavl_msg_t * msg)
             return 0;
           }
           break;
-          
         case GAVL_CMD_SRC_START:
           {
           gavl_msg_t msg;
@@ -304,7 +328,6 @@ static int handle_msg_read(void * data, gavl_msg_t * msg)
             gavl_track_merge(g->src.track, &track);
             gavl_dictionary_free(&track);
             gavl_msg_free(&msg);
-
             }
 
           /* Initialize sources */
@@ -325,6 +348,16 @@ static int handle_msg_read(void * data, gavl_msg_t * msg)
             seek_ondisk(g, time, scale);
             
             return 1;
+            }
+          else
+            {
+            /* Forward message */
+            gavf_reader_write_gavf_message(g, msg);
+
+            
+
+            //            gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN,
+            //                     "Seeking in non-file streams not supported yet");
             }
           }
           break;
@@ -482,13 +515,9 @@ int gavf_reader_open(gavf_reader_t * g, const char * uri)
           else
             gavl_io_skip(g->io, ch.len);
           }
-
         }
-      
       }
-
     gavl_io_seek(g->io, pos, SEEK_SET);
-    
     }
   
   /* Set seek flag */
@@ -510,7 +539,6 @@ int gavf_reader_open(gavf_reader_t * g, const char * uri)
       if((track = gavl_get_track_nc(&g->mi, i)) &&
          (m = gavl_track_get_metadata_nc(track)))
         {
-
         num_streams = gavl_track_get_num_streams_all(track);
 
         for(j = 0; j < num_streams; j++)
