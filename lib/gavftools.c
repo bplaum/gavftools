@@ -29,6 +29,9 @@ static gavl_time_t out_time = GAVL_TIME_UNDEFINED;
 
 static gavftools_thread_t gavftools_thread = { 0 };
 
+/* Used for gavtools_start() */
+pthread_barrier_t gavftools_barrier;
+
 static void set_out_time(gavl_time_t t)
   {
   pthread_mutex_lock(&out_time_mutex);
@@ -239,7 +242,8 @@ int gavftools_open_sink()
     return 0;
 
   if(gavf_writer_has_backchannel(gavftools_writer))
-    gavftools_flags |= GAVFTOOLS_OUT_BACKCHANNEL;
+    gavftools_flags |= (GAVFTOOLS_OUT_BACKCHANNEL|GAVFTOOLS_MULTI_THREAD);
+  
   
   return 1;
   }
@@ -491,13 +495,36 @@ int gavftools_handle_sink_message(gavl_msg_t * msg)
         case GAVL_CMD_SRC_SELECT_TRACK:
           break;
         case GAVL_CMD_SRC_SEEK:
-          fprintf(stderr, "Got seek command\n");
+          {
+          int64_t time;
+          int scale;
+          
+          time = gavl_msg_get_arg_long(msg, 0);
+          scale = gavl_msg_get_arg_int(msg, 1);
+
+          fprintf(stderr, "Got seek command %"PRId64" %d\n", time, scale);
+
+          gavftools_stop();
+          
+          if(gavftools_writer)
+            gavf_writer_write_discont(gavftools_writer, GAVF_PACKET_DISCONT_RESYNC);
+          
+          if(gavftools_input_handle)
+            bg_input_plugin_seek(gavftools_input_handle, time, scale);
+
+          gavftools_start();
+
+          }
           break;
         case GAVL_CMD_SRC_START:
           break;
         case GAVL_CMD_SRC_PAUSE:
+          if(gavftools_input_handle)
+            bg_input_plugin_pause(gavftools_input_handle);          
           break;
         case GAVL_CMD_SRC_RESUME:
+          if(gavftools_input_handle)
+            bg_input_plugin_resume(gavftools_input_handle);          
           break;
         }
       break;
@@ -524,6 +551,11 @@ static gavl_source_status_t process_stream(gavftools_stream_t * st)
     set_out_time(st->time);
     }
   return GAVL_SOURCE_OK;
+  }
+
+gavl_source_status_t gavftools_iteration_multithread(void * data)
+  {
+  return process_stream(data);
   }
 
 gavl_source_status_t gavftools_iteration_singlethread(void * data)
@@ -596,7 +628,11 @@ static void * thread_func(void * data)
   {
   gavftools_thread_t * th = data;
 
+  
   gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Started processing thread");
+
+  if(gavftools_flags & GAVFTOOLS_MULTI_THREAD)
+    pthread_barrier_wait(&gavftools_barrier);
   
   while(1)
     {
@@ -664,7 +700,21 @@ void gavftools_start(void)
   {
   if(gavftools_flags & GAVFTOOLS_MULTI_THREAD)
     {
+    int i;
+
+    pthread_barrier_init(&gavftools_barrier, NULL, num_gavftools_streams + 1);
     
+    for(i = 0; i < num_gavftools_streams; i++)
+      {
+      gavftools_streams[i].thread.process_func = gavftools_iteration_multithread;
+      gavftools_streams[i].thread.data = &gavftools_streams[i];
+      pthread_mutex_init(&gavftools_streams[i].thread.mutex, 0);
+      thread_start(&gavftools_streams[i].thread);
+      }
+    /* Fire up threads */
+    pthread_barrier_wait(&gavftools_barrier);
+    
+    pthread_barrier_destroy(&gavftools_barrier);
     }
   else
     {
@@ -678,12 +728,15 @@ void gavftools_stop(void)
   {
   if(gavftools_flags & GAVFTOOLS_MULTI_THREAD)
     {
-    
+    int i;
+    for(i = 0; i < num_gavftools_streams; i++)
+      {
+      thread_stop(&gavftools_streams[i].thread);
+      }
     }
   else
     {
     thread_stop(&gavftools_thread);
-    
     }
   }
 

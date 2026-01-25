@@ -1,16 +1,6 @@
 
 #include <gavl/packetindex.h>
 
-/* Packet flags */
-#define PACKET_HAS_PTS              (GAVL_PACKET_FLAG_PRIV<<0)
-#define PACKET_HAS_DURATION         (GAVL_PACKET_FLAG_PRIV<<1)
-#define PACKET_HAS_HEADER_SIZE      (GAVL_PACKET_FLAG_PRIV<<2)
-#define PACKET_HAS_SEQUENCE_END_POS (GAVL_PACKET_FLAG_PRIV<<3)
-#define PACKET_HAS_FIELD2_OFFSET    (GAVL_PACKET_FLAG_PRIV<<4)
-#define PACKET_HAS_RECTANGLE        (GAVL_PACKET_FLAG_PRIV<<5)
-#define PACKET_HAS_TIMECODE         (GAVL_PACKET_FLAG_PRIV<<6)
-#define PACKET_HAS_INTERLACE_MODE   (GAVL_PACKET_FLAG_PRIV<<7)
-#define PACKET_HAS_STREAM_ID        (GAVL_PACKET_FLAG_PRIV<<8)
 
 /* Global flags */
 
@@ -70,6 +60,9 @@ struct gavf_reader_s
   bg_msg_sink_t * bkch_sink;
   
   gavl_packet_index_t * idx;
+
+  pthread_mutex_t demux_mutex;
+  
   };
 
 struct gavf_writer_s
@@ -153,11 +146,6 @@ gavl_sink_status_t gavf_write_packet(gavl_io_t * io,
                                      gavl_packet_t * p,
                                      int stream_flags);
 
-/*
- *  The backchannel runs on the same socket as the io.
- *  It is purely non-blocking with update functions called periodically
- *  on both sides.
- */
+gavl_sink_status_t gavf_write_discont(gavl_io_t * io, int mode);
+gavl_source_status_t gavf_read_discont(gavl_io_t * io, int block, int * mode);
 
-//void gavf_backchannel_open(gavf_reader_t * g, int fd);
-//void gavf_backchannel_update(gavf_t * g);

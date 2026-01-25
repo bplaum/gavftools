@@ -89,23 +89,22 @@ gavl_source_status_t gavf_read_packet_header(gavl_io_t * io,
 
   //  fprintf(stderr, "Got packet flags: %08x\n", packet_flags);
   p->flags = packet_flags;
-  if((packet_flags & PACKET_HAS_STREAM_ID) &&
+  if((packet_flags & GAVF_PACKET_HAS_STREAM_ID) &&
      !gavl_io_read_32_be(io, (uint32_t*)&p->id))
     return GAVL_SOURCE_EOF;
 
+  if((packet_flags & GAVF_PACKET_HAS_PTS) && !gavl_io_read_int64v(io, &p->pts))
+    return GAVL_SOURCE_EOF;
+  if((packet_flags & GAVF_PACKET_HAS_DURATION) && !gavl_io_read_int64v(io, &p->duration))
+    return GAVL_SOURCE_EOF;
+  if((packet_flags & GAVF_PACKET_HAS_FIELD2_OFFSET) && !gavl_io_read_uint32v(io, &p->field2_offset))
+    return GAVL_SOURCE_EOF;
+  if((packet_flags & GAVF_PACKET_HAS_HEADER_SIZE) && !gavl_io_read_uint32v(io, &p->header_size))
+    return GAVL_SOURCE_EOF;
+  if((packet_flags & GAVF_PACKET_HAS_SEQUENCE_END_POS) && !gavl_io_read_uint32v(io, &p->sequence_end_pos))
+    return GAVL_SOURCE_EOF;
 
-  if((packet_flags & PACKET_HAS_PTS) && !gavl_io_read_int64v(io, &p->pts))
-    return GAVL_SOURCE_EOF;
-  if((packet_flags & PACKET_HAS_DURATION) && !gavl_io_read_int64v(io, &p->duration))
-    return GAVL_SOURCE_EOF;
-  if((packet_flags & PACKET_HAS_FIELD2_OFFSET) && !gavl_io_read_uint32v(io, &p->field2_offset))
-    return GAVL_SOURCE_EOF;
-  if((packet_flags & PACKET_HAS_HEADER_SIZE) && !gavl_io_read_uint32v(io, &p->header_size))
-    return GAVL_SOURCE_EOF;
-  if((packet_flags & PACKET_HAS_SEQUENCE_END_POS) && !gavl_io_read_uint32v(io, &p->sequence_end_pos))
-    return GAVL_SOURCE_EOF;
-
-  if((packet_flags & PACKET_HAS_RECTANGLE) &&
+  if((packet_flags & GAVF_PACKET_HAS_RECTANGLE) &&
      (!gavl_io_read_int32v(io, &p->src_rect.x) ||
       !gavl_io_read_int32v(io, &p->src_rect.y) ||
       !gavl_io_read_int32v(io, &p->src_rect.w) ||
@@ -114,11 +113,11 @@ gavl_source_status_t gavf_read_packet_header(gavl_io_t * io,
       !gavl_io_read_int32v(io, &p->dst_y)))
      return GAVL_SOURCE_EOF;
   
-  if((packet_flags & PACKET_HAS_INTERLACE_MODE) &&
+  if((packet_flags & GAVF_PACKET_HAS_INTERLACE_MODE) &&
      !gavl_io_read_int32v(io, &p->interlace_mode))
     return GAVL_SOURCE_EOF;
   
-  if((packet_flags & PACKET_HAS_TIMECODE) &&
+  if((packet_flags & GAVF_PACKET_HAS_TIMECODE) &&
      !gavl_io_read_uint64v(io, &p->timecode))
     return GAVL_SOURCE_EOF;
   
@@ -136,24 +135,24 @@ gavl_sink_status_t gavf_write_packet_header(gavl_io_t * io,
   
   /* Assemble packet flags */
   if(p->pts != GAVL_TIME_UNDEFINED)
-    packet_flags |= PACKET_HAS_PTS;
+    packet_flags |= GAVF_PACKET_HAS_PTS;
   if(p->duration > 0)
-    packet_flags |= PACKET_HAS_DURATION;
+    packet_flags |= GAVF_PACKET_HAS_DURATION;
 
   if(p->field2_offset > 0)
-    packet_flags |= PACKET_HAS_FIELD2_OFFSET;
+    packet_flags |= GAVF_PACKET_HAS_FIELD2_OFFSET;
   if(p->sequence_end_pos > 0)
-    packet_flags |= PACKET_HAS_SEQUENCE_END_POS;
+    packet_flags |= GAVF_PACKET_HAS_SEQUENCE_END_POS;
   if(p->header_size > 0)
-    packet_flags |= PACKET_HAS_HEADER_SIZE;
+    packet_flags |= GAVF_PACKET_HAS_HEADER_SIZE;
 
   if((p->src_rect.w > 0) && (p->src_rect.h > 0))
-    packet_flags |= PACKET_HAS_RECTANGLE;
+    packet_flags |= GAVF_PACKET_HAS_RECTANGLE;
 
   if(p->timecode != GAVL_TIMECODE_UNDEFINED)
-    packet_flags |= PACKET_HAS_TIMECODE;
+    packet_flags |= GAVF_PACKET_HAS_TIMECODE;
   if(p->interlace_mode != GAVL_INTERLACE_NONE)
-    packet_flags |= PACKET_HAS_INTERLACE_MODE;
+    packet_flags |= GAVF_PACKET_HAS_INTERLACE_MODE;
   
   if(gavl_io_write_data(io, (uint8_t*)&prefix, 1) < 1)
     return GAVL_SINK_ERROR;
@@ -161,22 +160,22 @@ gavl_sink_status_t gavf_write_packet_header(gavl_io_t * io,
   if(!gavl_io_write_uint32v(io, packet_flags))
     return GAVL_SINK_ERROR;
 
-  if((packet_flags & PACKET_HAS_STREAM_ID) &&
+  if((packet_flags & GAVF_PACKET_HAS_STREAM_ID) &&
      !gavl_io_write_32_be(io, p->id))
     return GAVL_SINK_ERROR;
   
-  if((packet_flags & PACKET_HAS_PTS)              && !gavl_io_write_int64v(io, p->pts))
+  if((packet_flags & GAVF_PACKET_HAS_PTS)              && !gavl_io_write_int64v(io, p->pts))
     return GAVL_SINK_ERROR;
-  if((packet_flags & PACKET_HAS_DURATION)         && !gavl_io_write_int64v(io, p->duration))
+  if((packet_flags & GAVF_PACKET_HAS_DURATION)         && !gavl_io_write_int64v(io, p->duration))
     return GAVL_SINK_ERROR;
-  if((packet_flags & PACKET_HAS_FIELD2_OFFSET)    && !gavl_io_write_uint32v(io, p->field2_offset))
+  if((packet_flags & GAVF_PACKET_HAS_FIELD2_OFFSET)    && !gavl_io_write_uint32v(io, p->field2_offset))
     return GAVL_SINK_ERROR;
-  if((packet_flags & PACKET_HAS_HEADER_SIZE)      && !gavl_io_write_uint32v(io, p->header_size))
+  if((packet_flags & GAVF_PACKET_HAS_HEADER_SIZE)      && !gavl_io_write_uint32v(io, p->header_size))
     return GAVL_SINK_ERROR;
-  if((packet_flags & PACKET_HAS_SEQUENCE_END_POS) && !gavl_io_write_uint32v(io, p->sequence_end_pos))
+  if((packet_flags & GAVF_PACKET_HAS_SEQUENCE_END_POS) && !gavl_io_write_uint32v(io, p->sequence_end_pos))
     return GAVL_SINK_ERROR;
 
-  if((packet_flags & PACKET_HAS_RECTANGLE) &&
+  if((packet_flags & GAVF_PACKET_HAS_RECTANGLE) &&
      (!gavl_io_write_int32v(io, p->src_rect.x) ||
       !gavl_io_write_int32v(io, p->src_rect.y) ||
       !gavl_io_write_int32v(io, p->src_rect.w) ||
@@ -185,11 +184,11 @@ gavl_sink_status_t gavf_write_packet_header(gavl_io_t * io,
       !gavl_io_write_int32v(io, p->dst_y)))
      return GAVL_SINK_ERROR;
   
-  if((packet_flags & PACKET_HAS_INTERLACE_MODE) &&
+  if((packet_flags & GAVF_PACKET_HAS_INTERLACE_MODE) &&
      !gavl_io_write_int32v(io, p->interlace_mode))
     return GAVL_SINK_ERROR;
   
-  if((packet_flags & PACKET_HAS_TIMECODE) &&
+  if((packet_flags & GAVF_PACKET_HAS_TIMECODE) &&
      !gavl_io_write_uint64v(io, p->timecode))
     return GAVL_SINK_ERROR;
   
@@ -245,7 +244,7 @@ gavl_source_status_t gavf_packet_skip_data(gavl_io_t * io,
   {
   uint32_t size;
 
-  if(gavl_io_read_uint32v(io, &size))
+  if(!gavl_io_read_uint32v(io, &size))
     return GAVL_SOURCE_EOF;
   
   gavl_io_skip(io, size);

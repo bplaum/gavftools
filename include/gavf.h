@@ -37,6 +37,40 @@ gavf_writer_t * gavf_writer_create();
 #define GAVF_MSG_DISCONTINUITY 2 /* Discontinuity   */
 #define GAVF_MSG_RESYNC        3 /* Post seek resync   */
 
+/* Format specific packet flags (not used in plain gavl) */
+
+/* Packet flags */
+#define GAVF_PACKET_HAS_PTS              (GAVL_PACKET_FLAG_PRIV<<0)
+#define GAVF_PACKET_HAS_DURATION         (GAVL_PACKET_FLAG_PRIV<<1)
+#define GAVF_PACKET_HAS_HEADER_SIZE      (GAVL_PACKET_FLAG_PRIV<<2)
+#define GAVF_PACKET_HAS_SEQUENCE_END_POS (GAVL_PACKET_FLAG_PRIV<<3)
+#define GAVF_PACKET_HAS_FIELD2_OFFSET    (GAVL_PACKET_FLAG_PRIV<<4)
+#define GAVF_PACKET_HAS_RECTANGLE        (GAVL_PACKET_FLAG_PRIV<<5)
+#define GAVF_PACKET_HAS_TIMECODE         (GAVL_PACKET_FLAG_PRIV<<6)
+#define GAVF_PACKET_HAS_INTERLACE_MODE   (GAVL_PACKET_FLAG_PRIV<<7)
+#define GAVF_PACKET_HAS_STREAM_ID        (GAVL_PACKET_FLAG_PRIV<<8)
+
+/* For interactive streams, we use packets with special flags as
+   "markers", so they can be handled on a low level.
+*/
+
+/* Inserted at a seek boundary */
+#define GAVF_PACKET_DISCONT_RESYNC       (GAVL_PACKET_FLAG_PRIV<<9)
+
+/*
+ *  EOF means that no packets follow immediately. Decoding might get
+ *  restarted through
+ */
+
+#define GAVF_PACKET_DISCONT_EOF          (GAVL_PACKET_FLAG_PRIV<<10)
+
+/* For testing */
+#define GAVF_PACKET_DISCONT  (GAVF_PACKET_DISCONT_RESYNC | GAVF_PACKET_DISCONT_EOF)
+
+
+   
+
+
 /* If transmitted over a pipe for fifo, one single GAVFHEAD chunk is sent, which
    contains one track of class GAVL_META_CLASS_LOCATION and a unix socket address to
    connect to as a client. This way pipes are transparently updated to duplex sockets */
@@ -145,4 +179,8 @@ bg_controllable_t * gavf_reader_get_controllable(gavf_reader_t * g);
 
 void gavf_reader_destroy(gavf_reader_t * g);
 void gavf_writer_destroy(gavf_writer_t * g);
+
+gavl_source_status_t gavf_reader_drain(gavf_reader_t * g, int * mode);
+void gavf_writer_write_discont(gavf_writer_t * g, int mode);
+
 
