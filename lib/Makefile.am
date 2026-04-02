@@ -5,6 +5,8 @@ AM_CFLAGS = -DLOCALE_DIR=\"$(localedir)\"
 lib_LTLIBRARIES = libgavf.la
 
 libgavf_la_SOURCES = \
+fd_io.c \
+frame_io.c \
 gavf.c \
 gavf_io.c \
 gavftools.c \

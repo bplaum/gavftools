@@ -5,6 +5,8 @@
 #include <gmerlin/pluginregistry.h>
 #include <gmerlin/utils.h>
 
+#include <gavl/hw.h>
+
 #include <gavl/log.h>
 #define LOG_DOMAIN "gavftools"
 
@@ -31,6 +33,9 @@ static gavftools_thread_t gavftools_thread = { 0 };
 
 /* Used for gavtools_start() */
 pthread_barrier_t gavftools_barrier;
+
+static gavl_array_t audio_buffer_formats = { 0 };
+static gavl_array_t video_buffer_formats = { 0 };
 
 static void set_out_time(gavl_time_t t)
   {
@@ -86,6 +91,14 @@ static void set_stream_actions_auto(gavl_stream_type_t type)
     }
   }
 
+static void enable_msg_stream()
+  {
+  if(bg_media_source_set_msg_action_by_id(gavftools_src, GAVL_META_STREAM_ID_MSG_PROGRAM,
+                                          BG_STREAM_ACTION_DECODE))
+    gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Enabled message stream");
+  }
+
+
 static int wait_for_message(gavl_msg_t * msg)
   {
   int result;
@@ -107,7 +120,7 @@ int gavftools_init_src()
   {
   gavl_msg_t msg;
   int done;
-  
+
   if(!gavftools_src_location)
     gavftools_src_location = GAVF_PROTOCOL"://-";
 
@@ -116,6 +129,10 @@ int gavftools_init_src()
     {
     gavl_dictionary_t * mi;
     mi = bg_plugin_registry_load_media_info(bg_plugin_reg, gavftools_src_location, 0);
+
+    if(!mi)
+      return 0;
+    
     gavf_writer_send_media_info(gavftools_writer, mi);
     /* Wait for select track */
     while(wait_for_message(&msg))
@@ -150,6 +167,8 @@ int gavftools_init_src()
           {
           gavl_dictionary_free(&track);
           free(real_uri);
+          gavl_dictionary_destroy(mi);
+          gavl_msg_free(&msg);
           return 0;
           }
         
@@ -158,54 +177,115 @@ int gavftools_init_src()
 
         gavftools_input_plugin = (bg_input_plugin_t*)gavftools_input_handle->plugin;
         gavftools_src = gavftools_input_plugin->get_src(gavftools_input_handle->priv);
+        gavl_msg_reset(&msg);
         break;
         }
-      
+      gavl_msg_reset(&msg);
       }
 
     if(!gavftools_input_plugin)
+      {
+      gavl_dictionary_destroy(mi);
       return 0;
-      
+      }
+    
     /* Set up source */
     done = 0;
     while(wait_for_message(&msg))
       {
-      if((msg.NS == GAVL_MSG_NS_SRC) &&
-         (msg.ID == GAVL_CMD_SRC_SET_STREAM_ACTION))
+      switch(msg.NS)
         {
-        gavl_stream_type_t type;
-        int idx;
-        int action;
-        bg_media_source_stream_t * st;
+        case GAVL_MSG_NS_SRC:
+          {
+          switch(msg.ID)
+            {
+            case GAVL_CMD_SRC_SET_STREAM_ACTION:
+              {
+              gavl_stream_type_t type;
+              int idx;
+              int action;
+              bg_media_source_stream_t * st;
         
         
-        type   = gavl_msg_get_arg_int(&msg, 0);
-        idx    = gavl_msg_get_arg_int(&msg, 1);
-        action = gavl_msg_get_arg_int(&msg, 2);
+              type   = gavl_msg_get_arg_int(&msg, 0);
+              idx    = gavl_msg_get_arg_int(&msg, 1);
+              action = gavl_msg_get_arg_int(&msg, 2);
 
-        //        fprintf(stderr, "Setting stream action: %d %d %d\n", type, idx, action);
+              fprintf(stderr, "Setting stream action: %d %d %d\n", type, idx, action);
 
-        st = bg_media_source_get_stream(gavftools_src, type, idx);
-        if(action)
-          st->action = BG_STREAM_ACTION_READRAW;
-        else
-          st->action = BG_STREAM_ACTION_OFF;
+              st = bg_media_source_get_stream(gavftools_src, type, idx);
+#if 0
+              if(action)
+                st->action = BG_STREAM_ACTION_READRAW;
+              else
+                st->action = BG_STREAM_ACTION_OFF;
+#else
+              st->action = action;
+#endif
+              }
+              break;
+            case GAVL_CMD_SRC_START:
+              fprintf(stderr, "Got start %d %d\n",
+                      audio_buffer_formats.num_entries,
+                      video_buffer_formats.num_entries);
+
+              /* Try zero copy */
+              if(gavftools_flags & GAVFTOOLS_OUT_LOCAL)
+                {
+                fprintf(stderr, "Trying zero copy\n");
+                
+                if(!audio_buffer_formats.num_entries)
+                  gavl_hw_buf_desc_append(&audio_buffer_formats, GAVL_HW_MEMFD);
+                if(!video_buffer_formats.num_entries)
+                  gavl_hw_buf_desc_append(&video_buffer_formats, GAVL_HW_MEMFD);
+
+                gavl_hw_buf_desc_set_shared(&audio_buffer_formats);
+                gavl_hw_buf_desc_set_shared(&video_buffer_formats);
+                
+                bg_input_plugin_set_audio_buffer_formats(gavftools_input_handle,
+                                                         &audio_buffer_formats);
+                bg_input_plugin_set_video_buffer_formats(gavftools_input_handle,
+                                                         &video_buffer_formats);
+                
+                
+                }
+              
+              done = 1;
+              break;
+            case GAVL_CMD_SRC_SET_BUFFER_FORMATS:
+              {
+              int type = gavl_msg_get_arg_int(&msg, 0);
+              // fprintf(stderr, "Got buffer format\n");
+              switch(type)
+                {
+                case GAVL_STREAM_AUDIO:
+                  //                  fprintf(stderr, "Got audio buffer format\n");
+                  gavl_msg_get_arg_array(&msg, 1, &audio_buffer_formats);
+                  break;
+                case GAVL_STREAM_VIDEO:
+                  //                  fprintf(stderr, "Got video buffer format\n");
+                  gavl_msg_get_arg_array(&msg, 1, &video_buffer_formats);
+                  break;
+                }
+              }
+              break;
+            }
+          break;
+          }
         }
-      
-      if((msg.NS == GAVL_MSG_NS_SRC) &&
-         (msg.ID == GAVL_CMD_SRC_START))
-        {
-        fprintf(stderr, "Got start\n");
-        done = 1;
+
+      gavl_msg_reset(&msg);
+
+      if(done)
         break;
-        }
       }
 
-    if(!done)
-      return 0;
+    enable_msg_stream();
     
     bg_input_plugin_start(gavftools_input_handle);
-    gavl_dictionary_dump(gavftools_src->track, 2);
+    //    gavl_dictionary_dump(gavftools_src->track, 2);
+    
+    gavl_dictionary_destroy(mi);
     }
   else /* No commands expected, let's initialize the source ourselves */
     {
@@ -228,6 +308,9 @@ int gavftools_init_src()
     set_stream_actions_auto(GAVL_STREAM_OVERLAY);
     
     gavl_dictionary_free(&track);
+
+    enable_msg_stream();
+    
     bg_input_plugin_start(gavftools_input_handle);
     }
   
@@ -243,7 +326,8 @@ int gavftools_open_sink()
 
   if(gavf_writer_has_backchannel(gavftools_writer))
     gavftools_flags |= (GAVFTOOLS_OUT_BACKCHANNEL|GAVFTOOLS_MULTI_THREAD);
-  
+  if(gavf_writer_is_local(gavftools_writer))
+    gavftools_flags |= GAVFTOOLS_OUT_LOCAL;
   
   return 1;
   }
@@ -252,7 +336,7 @@ static gavl_source_status_t process_stream_audio(gavftools_stream_t * s)
   {
   gavl_audio_frame_t * aframe = gavl_audio_sink_get_frame(s->asink);
   gavl_source_status_t src_st;
-  
+
   src_st = gavl_audio_source_read_frame(s->src->asrc, &aframe);
   if(src_st == GAVL_SOURCE_EOF)
     return src_st;
@@ -401,6 +485,36 @@ static gavl_source_status_t process_stream_packet_discont(gavftools_stream_t * s
   return GAVL_SOURCE_OK;
   }
 
+static int gavftools_eof(void)
+  {
+  int ret = 1;
+  int i;
+
+  if(gavftools_flags & GAVFTOOLS_MULTI_THREAD)
+    {
+    for(i = 0; i < num_gavftools_streams; i++)
+      {
+      pthread_mutex_lock(&gavftools_streams[i].thread.mutex);
+      if(gavftools_streams[i].thread.state != THREAD_STATE_EOF)
+        ret = 0;
+      pthread_mutex_unlock(&gavftools_streams[i].thread.mutex);
+
+      if(!ret)
+        break;
+      }
+    }
+  else
+    {
+    pthread_mutex_lock(&gavftools_thread.mutex);
+    if(gavftools_thread.state != THREAD_STATE_EOF)
+      ret = 0;
+    pthread_mutex_unlock(&gavftools_thread.mutex);
+    
+    }
+  
+  return ret;
+  }
+
 int gavftools_init_sink(bg_media_source_t * src)
   {
   int i = 0;
@@ -414,7 +528,8 @@ int gavftools_init_sink(bg_media_source_t * src)
   /* Initialize connector */
   for(i = 0; i < src->num_streams; i++)
     {
-    if(src->streams[i]->action != BG_STREAM_ACTION_OFF)
+    if((src->streams[i]->action != BG_STREAM_ACTION_OFF) &&
+       (src->streams[i]->type != GAVL_STREAM_MSG))
       num_gavftools_streams++;
     }
   gavftools_streams = calloc(num_gavftools_streams, sizeof(*gavftools_streams));
@@ -422,9 +537,10 @@ int gavftools_init_sink(bg_media_source_t * src)
   
   for(i = 0; i < src->num_streams; i++)
     {
-    if(src->streams[i]->action == BG_STREAM_ACTION_OFF)
+    if((src->streams[i]->action == BG_STREAM_ACTION_OFF) ||
+       (src->streams[i]->type == GAVL_STREAM_MSG))
       continue;
-
+    
     gavftools_streams[idx].last_status = GAVL_SOURCE_OK;
     
     if(!gavl_stream_is_continuous(src->streams[i]->s))
@@ -438,6 +554,9 @@ int gavftools_init_sink(bg_media_source_t * src)
 
       gavftools_streams[idx].process = process_stream_audio;
       gavftools_streams[idx].timescale = fmt->samplerate;
+
+      gavl_audio_source_set_dst(gavftools_streams[idx].src->asrc, 0, fmt);
+      
       }
     else if((gavftools_streams[idx].vsink = gavf_writer_get_video_sink(gavftools_writer, idx)))
       {
@@ -449,6 +568,9 @@ int gavftools_init_sink(bg_media_source_t * src)
         gavftools_streams[idx].process = process_stream_video;
 
       gavftools_streams[idx].timescale = fmt->timescale;
+
+      gavl_video_source_set_dst(gavftools_streams[idx].src->vsrc, 0, fmt);
+
       }
     else if((gavftools_streams[idx].msink = gavf_writer_get_message_sink(gavftools_writer, idx)))
       {
@@ -620,8 +742,24 @@ gavl_source_status_t gavftools_iteration_singlethread(void * data)
 void gavftools_cleanup(void)
   {
   if(gavftools_writer)
+    {
     gavf_writer_destroy(gavftools_writer);
+    gavftools_writer = NULL;
+    }
   
+  if(gavftools_input_handle)
+    {
+    bg_plugin_unref(gavftools_input_handle);
+    gavftools_input_handle = NULL;
+    }
+
+  gavl_array_reset(&audio_buffer_formats);
+  gavl_array_reset(&video_buffer_formats);
+
+  if(gavftools_streams)
+    free(gavftools_streams);
+  
+  bg_global_cleanup();
   }
 
 static void * thread_func(void * data)
@@ -708,7 +846,7 @@ void gavftools_start(void)
       {
       gavftools_streams[i].thread.process_func = gavftools_iteration_multithread;
       gavftools_streams[i].thread.data = &gavftools_streams[i];
-      pthread_mutex_init(&gavftools_streams[i].thread.mutex, 0);
+      pthread_mutex_init(&gavftools_streams[i].thread.mutex, NULL);
       thread_start(&gavftools_streams[i].thread);
       }
     /* Fire up threads */
@@ -742,14 +880,18 @@ void gavftools_stop(void)
 
 void gavftools_run(void)
   {
+  gavl_time_t delay_time = GAVL_TIME_SCALE / 20; // 50 ms
   gavl_msg_t msg;
   int result;
+  
   gavftools_start();
 
   gavl_msg_init(&msg);
   
   while(1)
     {
+    result = 0;
+    
     if(bg_got_sigint())
       break;
 
@@ -766,6 +908,13 @@ void gavftools_run(void)
           break;
         }
       }
+    
+    /* Check for EOF */
+    if(gavftools_eof())
+      break;
+    
+    if(!result) // Idle
+      gavl_time_delay(&delay_time);
     }
   
   gavftools_stop();

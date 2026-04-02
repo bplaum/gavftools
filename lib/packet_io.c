@@ -1,12 +1,13 @@
 
 #include <string.h>
+#include <pthread.h>
 
 #include <gavf.h>
 #include <gavfprivate.h>
 #include <gavl/connectors.h>
 #include <gavl/numptr.h>
 
-gavl_source_status_t gavf_packet_read_multiplex(void * priv, gavl_packet_t ** p)
+static gavl_source_status_t gavf_packet_read_multiplex(void * priv, gavl_packet_t ** p)
   {
   gavf_reader_stream_t * gs;
   bg_media_source_stream_t * s = priv;
@@ -14,6 +15,8 @@ gavl_source_status_t gavf_packet_read_multiplex(void * priv, gavl_packet_t ** p)
   
   gs = s->user_data;
 
+  gavf_reader_poll_msg(gs->reader);
+  
   while((st = gavl_packet_source_read_packet(gavl_packet_buffer_get_source(gs->buf), p))
         == GAVL_SOURCE_AGAIN)
     {
@@ -24,15 +27,18 @@ gavl_source_status_t gavf_packet_read_multiplex(void * priv, gavl_packet_t ** p)
   return st;
   }
 
-gavl_source_status_t gavf_packet_read_separate(void * priv, gavl_packet_t ** p)
+static gavl_source_status_t gavf_packet_read_separate(void * priv, gavl_packet_t ** p)
   {
   gavf_reader_stream_t * gs;
   bg_media_source_stream_t * s = priv;
   gs = s->user_data;
+
+  gavf_reader_poll_msg(gs->reader);
+  
   return gavf_read_packet(gs->io, *p);
   }
 
-gavl_source_status_t gavf_packet_read_multiplex_noncont(void * priv, gavl_packet_t ** p)
+static gavl_source_status_t gavf_packet_read_multiplex_noncont(void * priv, gavl_packet_t ** p)
   {
   gavf_reader_stream_t * gs;
   bg_media_source_stream_t * s = priv;
@@ -40,7 +46,7 @@ gavl_source_status_t gavf_packet_read_multiplex_noncont(void * priv, gavl_packet
   return gavl_packet_source_read_packet(gavl_packet_buffer_get_source(gs->buf), p);
   }
 
-gavl_source_status_t gavf_packet_read_separate_noncont(void * priv, gavl_packet_t ** p)
+static gavl_source_status_t gavf_packet_read_separate_noncont(void * priv, gavl_packet_t ** p)
   {
   gavf_reader_stream_t * gs;
   bg_media_source_stream_t * s = priv;
@@ -54,23 +60,101 @@ gavl_source_status_t gavf_packet_read_separate_noncont(void * priv, gavl_packet_
 
 /* Sink */
 
-gavl_sink_status_t gavf_packet_put_multiplex(void * priv, gavl_packet_t * p)
+static gavl_sink_status_t gavf_packet_put_multiplex(void * priv, gavl_packet_t * p)
   {
   gavf_writer_stream_t * gs = priv;
   p->id = gs->stream_id;
   /* Build packet index */
-  p->position = gavl_io_position(gs->writer->io) - gs->writer->header_start_pos;
-  
-  gavl_packet_index_add_packet(gs->writer->idx, p);
+
+  if(gs->writer->flags & FLAG_ON_DISK)
+    {
+    p->position = gavl_io_position(gs->writer->io) - gs->writer->header_start_pos;
+    gavl_packet_index_add_packet(gs->writer->idx, p);
+    }
   
   return gavf_write_packet(gs->writer->io, p, gs->packet_flags);
   }
 
-gavl_sink_status_t gavf_packet_put_separate(void * priv, gavl_packet_t * p)
+static gavl_sink_status_t gavf_packet_put_separate(void * priv, gavl_packet_t * p)
   {
   gavf_writer_stream_t * gs = priv;
   return gavf_write_packet(gs->io, p, gs->packet_flags);
   }
+
+static void lock_demuxer(void * priv)
+  {
+  gavf_reader_t * g = priv;
+  pthread_mutex_lock(&g->demux_mutex);
+  }
+
+static void unlock_demuxer(void * priv)
+  {
+  gavf_reader_t * g = priv;
+  pthread_mutex_unlock(&g->demux_mutex);
+  }
+
+int gavf_create_packet_source(bg_media_source_stream_t * s)
+  {
+  gavf_reader_stream_t * st = s->user_data;
+  
+  /* Set up packet sources */
+  if(st->reader->flags & FLAG_SEPARATE_STREAMS)
+    {
+    if(gavl_stream_is_continuous(s->s))
+      {
+      s->psrc_priv =                                                         
+        gavl_packet_source_create(gavf_packet_read_separate,
+                                  s, 0, s->s);
+      }
+    else
+      {
+      s->psrc_priv =                                                         
+        gavl_packet_source_create(gavf_packet_read_separate_noncont,
+                                  s, 0, s->s);
+      }
+    }
+  else
+    {
+    if(gavl_stream_is_continuous(s->s))
+      {
+      s->psrc_priv =                                                         
+        gavl_packet_source_create(gavf_packet_read_multiplex,
+                                  s, GAVL_SOURCE_SRC_ALLOC, s->s);
+      }
+    else
+      {
+      s->psrc_priv =                                                         
+        gavl_packet_source_create(gavf_packet_read_multiplex_noncont,
+                                  s, GAVL_SOURCE_SRC_ALLOC, s->s);
+      }
+
+    /* Set lock functions */
+    gavl_packet_source_set_lock_funcs(s->psrc_priv,
+                                      lock_demuxer, unlock_demuxer, st->reader);
+      
+    st->buf = gavl_packet_buffer_create(s->s);
+    }
+  s->psrc = s->psrc_priv;
+  return 1;
+  }
+
+int gavf_create_packet_sink(gavf_writer_stream_t * st)
+  {
+  if(st->writer->flags & FLAG_SEPARATE_STREAMS)
+    {
+    st->psink = gavl_packet_sink_create(NULL, gavf_packet_put_separate, st);
+    return 1;
+    }
+  else
+    {
+    /* Multiplex */
+    st->packet_flags |= GAVF_PACKET_HAS_STREAM_ID;
+    st->psink = gavl_packet_sink_create(NULL, gavf_packet_put_multiplex, st);
+    return 1;
+    }
+  }
+
+/* R/W functions */
 
 gavl_source_status_t gavf_read_packet_header(gavl_io_t * io,
                                              gavl_packet_t * p)
@@ -120,6 +204,14 @@ gavl_source_status_t gavf_read_packet_header(gavl_io_t * io,
   if((packet_flags & GAVF_PACKET_HAS_TIMECODE) &&
      !gavl_io_read_uint64v(io, &p->timecode))
     return GAVL_SOURCE_EOF;
+
+  if(packet_flags & GAVF_PACKET_HAS_BUF_IDX)
+    {
+    if(!gavl_io_read_int32v(io, &p->buf_idx))
+      return GAVL_SINK_ERROR;
+    }
+  else
+    p->buf_idx = -1;
   
   return GAVL_SOURCE_OK;
   }
@@ -153,6 +245,9 @@ gavl_sink_status_t gavf_write_packet_header(gavl_io_t * io,
     packet_flags |= GAVF_PACKET_HAS_TIMECODE;
   if(p->interlace_mode != GAVL_INTERLACE_NONE)
     packet_flags |= GAVF_PACKET_HAS_INTERLACE_MODE;
+
+  if(p->buf_idx >= 0)
+    packet_flags |= GAVF_PACKET_HAS_BUF_IDX;
   
   if(gavl_io_write_data(io, (uint8_t*)&prefix, 1) < 1)
     return GAVL_SINK_ERROR;
@@ -190,6 +285,9 @@ gavl_sink_status_t gavf_write_packet_header(gavl_io_t * io,
   
   if((packet_flags & GAVF_PACKET_HAS_TIMECODE) &&
      !gavl_io_write_uint64v(io, p->timecode))
+    return GAVL_SINK_ERROR;
+
+  if((packet_flags & GAVF_PACKET_HAS_BUF_IDX) && !gavl_io_write_int32v(io, p->buf_idx))
     return GAVL_SINK_ERROR;
   
   return GAVL_SINK_OK;

@@ -8,6 +8,8 @@ typedef struct gavf_writer_s gavf_writer_t;
 gavf_reader_t * gavf_reader_create();
 gavf_writer_t * gavf_writer_create();
 
+int gavf_writer_is_local(const gavf_writer_t *);
+
 /*
  * URIs:
  *
@@ -50,19 +52,26 @@ gavf_writer_t * gavf_writer_create();
 #define GAVF_PACKET_HAS_INTERLACE_MODE   (GAVL_PACKET_FLAG_PRIV<<7)
 #define GAVF_PACKET_HAS_STREAM_ID        (GAVL_PACKET_FLAG_PRIV<<8)
 
+/* The transmitter of this packet passes file descriptors
+   via sendmsg() right after this packet */
+#define GAVF_PACKET_HAS_BUFFERS          (GAVL_PACKET_FLAG_PRIV<<9)
+
+#define GAVF_PACKET_HAS_BUF_IDX          (GAVL_PACKET_FLAG_PRIV<<10)
+
+
 /* For interactive streams, we use packets with special flags as
    "markers", so they can be handled on a low level.
 */
 
 /* Inserted at a seek boundary */
-#define GAVF_PACKET_DISCONT_RESYNC       (GAVL_PACKET_FLAG_PRIV<<9)
+#define GAVF_PACKET_DISCONT_RESYNC       (GAVL_PACKET_FLAG_PRIV<<11)
 
 /*
  *  EOF means that no packets follow immediately. Decoding might get
  *  restarted through
  */
 
-#define GAVF_PACKET_DISCONT_EOF          (GAVL_PACKET_FLAG_PRIV<<10)
+#define GAVF_PACKET_DISCONT_EOF          (GAVL_PACKET_FLAG_PRIV<<12)
 
 /* For testing */
 #define GAVF_PACKET_DISCONT  (GAVF_PACKET_DISCONT_RESYNC | GAVF_PACKET_DISCONT_EOF)
@@ -183,4 +192,6 @@ void gavf_writer_destroy(gavf_writer_t * g);
 gavl_source_status_t gavf_reader_drain(gavf_reader_t * g, int * mode);
 void gavf_writer_write_discont(gavf_writer_t * g, int mode);
 
+gavl_dictionary_t * gavf_stream_get_hwinfo_nc(gavl_dictionary_t * s);
+const gavl_dictionary_t * gavf_stream_get_hwinfo(const gavl_dictionary_t * s);
 

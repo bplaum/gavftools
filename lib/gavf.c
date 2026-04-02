@@ -9,11 +9,40 @@
 #include <gavl/log.h>
 #define LOG_DOMAIN "gavf"
 
+#include <gavl/hw.h>
+
+
 #include <gavl/utils.h>
 
 #include <gavl/gavlsocket.h>
 
+#define HWINFO_KEY "hwinfo"
+
 #define HAS_HW 0
+
+void gavf_reader_poll_msg(gavf_reader_t * g)
+  {
+  if(!g->msg_stream)
+    return;
+
+  if(!pthread_mutex_trylock(&g->msg_mutex))
+    {
+    gavl_packet_t * p = NULL;
+
+    if(gavl_packet_source_read_packet(g->msg_stream->psrc, &p) == GAVL_SOURCE_OK)
+      {
+      gavl_msg_t * msg;
+      bg_msg_sink_t * sink = bg_msg_hub_get_sink(g->msg_stream->msghub);
+
+      msg = bg_msg_sink_get(sink);
+      gavl_packet_to_msg(p, msg);
+      bg_msg_sink_put(sink);
+      }
+    
+    pthread_mutex_unlock(&g->msg_mutex);
+    }
+  
+  }
 
 static int select_track(gavf_reader_t * g, gavl_msg_t * msg)
   {
@@ -42,16 +71,6 @@ static int select_track(gavf_reader_t * g, gavl_msg_t * msg)
   return 1;
   }
 
-#if 0
-static int drain_read(gavf_reader_t * g)
-  {
-  while(1)
-    {
-    
-    }
-  
-  }
-#endif
 
 static void send_stream_action(gavf_reader_t * g,
                                gavl_stream_type_t type)
@@ -88,6 +107,10 @@ static void free_stream_priv(void * user_data)
     gavl_packet_buffer_destroy(priv->buf);
   if(priv->io)
     gavl_io_destroy(priv->io);
+
+  if(priv->hwctx)
+    gavl_hw_ctx_destroy(priv->hwctx);
+  
   free(priv);
   }
 
@@ -98,23 +121,9 @@ static void * create_stream_priv(gavf_reader_t * r)
   return ret;
   }
 
-static void lock_demuxer(void * priv)
-  {
-  gavf_reader_t * g = priv;
-  pthread_mutex_lock(&g->demux_mutex);
-  }
-
-static void unlock_demuxer(void * priv)
-  {
-  gavf_reader_t * g = priv;
-  pthread_mutex_unlock(&g->demux_mutex);
-  }
-
 static int start_read(gavf_reader_t * g)
   {
   int i;
-
-  fprintf(stderr, "start_read: %d\n", !!(g->flags & FLAG_SEPARATE_STREAMS));
   
   for(i = 0; i < g->src.num_streams; i++)
     {
@@ -125,7 +134,7 @@ static int start_read(gavf_reader_t * g)
     
     if(s->action == BG_STREAM_ACTION_OFF)
       continue;
-        
+    
     s->user_data = create_stream_priv(g);
     s->free_user_data = free_stream_priv;
     
@@ -140,7 +149,7 @@ static int start_read(gavf_reader_t * g)
 
       const char * uri = gavl_dictionary_get_string(gavl_stream_get_metadata(s->s), GAVL_META_URI);
 
-      fprintf(stderr, "Got stream URI: %s\n", uri);
+      //      fprintf(stderr, "Got stream URI: %s\n", uri);
       //      gavl_dictionary_dump(g->src.streams[i]->s, 2);
 
       /* Unix client */
@@ -152,57 +161,39 @@ static int start_read(gavf_reader_t * g)
       free(name);
       }
     
-    /* Set up packet sources */
-    if(g->flags & FLAG_SEPARATE_STREAMS)
-      {
-      if(gavl_stream_is_continuous(g->src.streams[i]->s))
-        {
-        g->src.streams[i]->psrc_priv =                                                         
-          gavl_packet_source_create(gavf_packet_read_separate,
-                                    g->src.streams[i], 0, g->src.streams[i]->s);
-        }
-      else
-        {
-        g->src.streams[i]->psrc_priv =                                                         
-          gavl_packet_source_create(gavf_packet_read_separate_noncont,
-                                    g->src.streams[i], 0, g->src.streams[i]->s);
-        }
-      }
-    else
-      {
-      if(gavl_stream_is_continuous(g->src.streams[i]->s))
-        {
-        g->src.streams[i]->psrc_priv =                                                         
-          gavl_packet_source_create(gavf_packet_read_multiplex,
-                                    g->src.streams[i], GAVL_SOURCE_SRC_ALLOC, g->src.streams[i]->s);
-        }
-      else
-        {
-        g->src.streams[i]->psrc_priv =                                                         
-          gavl_packet_source_create(gavf_packet_read_multiplex_noncont,
-                                    g->src.streams[i], GAVL_SOURCE_SRC_ALLOC, g->src.streams[i]->s);
-        }
-
-      /* Set lock functions */
-      gavl_packet_source_set_lock_funcs(g->src.streams[i]->psrc_priv,
-                                        lock_demuxer, unlock_demuxer, g);
-      
-      sp->buf = gavl_packet_buffer_create(g->src.streams[i]->s);
-      }
-    g->src.streams[i]->psrc = g->src.streams[i]->psrc_priv;
-
     gavl_compression_info_init(&ci);
     gavl_stream_get_compression_info(g->src.streams[i]->s, &ci);
     
     if(ci.id == GAVL_CODEC_ID_NONE)
       {
       fprintf(stderr, "Uncompressed stream\n");
+
+      switch(g->src.streams[i]->type)
+        {
+        case GAVL_STREAM_AUDIO:
+          gavf_create_audio_source(g->src.streams[i]);
+          break;
+        case GAVL_STREAM_VIDEO:
+        case GAVL_STREAM_OVERLAY:
+          gavf_create_video_source(g->src.streams[i]);
+          break;
+        case GAVL_STREAM_MSG:
+          fprintf(stderr, "Got message stream\n");
+          if(!gavf_create_packet_source(g->src.streams[i]))
+            return 0;
+          g->msg_stream = g->src.streams[i];
+          g->msg_stream->msghub_priv = bg_msg_hub_create(1);
+          g->msg_stream->msghub = g->msg_stream->msghub_priv;
+          break;
+        default:
+          break;
+        }
       }
-    else if(g->src.streams[i]->action == BG_STREAM_ACTION_DECODE)
+    else
       {
-      fprintf(stderr, "Requested decoding\n");
+      if(!gavf_create_packet_source(g->src.streams[i]))
+        return 0;
       }
-    
     }
   
   /* Start decoders */
@@ -289,6 +280,9 @@ static int handle_msg_read(void * data, gavl_msg_t * msg)
           {
           gavl_msg_t msg;
           gavl_dictionary_t track;
+
+          //      fprintf(stderr, "Got start cmd\n");
+          
           if(g->flags & FLAG_ON_DISK)
             {
             while(gavl_chunk_read_header(g->io, &g->ch))
@@ -309,6 +303,10 @@ static int handle_msg_read(void * data, gavl_msg_t * msg)
             }
           else if(g->bkch_io)
             {
+            int i, num_streams;
+            gavl_dictionary_t * dst_s;
+            const gavl_dictionary_t * src_s;
+            
             // fprintf(stderr, "Got start\n");
             send_stream_action(g, GAVL_STREAM_AUDIO);
             send_stream_action(g, GAVL_STREAM_VIDEO);
@@ -338,15 +336,39 @@ static int handle_msg_read(void * data, gavl_msg_t * msg)
               gavl_msg_free(&msg);
               return 0;
               }
-            fprintf(stderr, "Got final header\n");
-
+            
             gavl_dictionary_init(&track);
             gavl_msg_get_arg_dictionary(&msg, 0, &track);
+
+            //            fprintf(stderr, "Got final header\n");
+            //            gavl_dictionary_dump(&track, 2);
+            
             gavl_track_merge(g->src.track, &track);
+
+            num_streams = gavl_track_get_num_streams_all(&track);
+            
+            for(i = 0; i < num_streams; i++)
+              {
+              gavl_compression_info_t ci;
+              
+              if(!(src_s = gavl_track_get_stream_all(&track, i)) ||
+                 !(dst_s = gavl_track_get_stream_all_nc(g->src.track, i)))
+                break;
+              gavl_dictionary_copy_value(dst_s, src_s, HWINFO_KEY);
+
+              gavl_compression_info_init(&ci);
+              if(!gavl_stream_get_compression_info(src_s, &ci) ||
+                 (ci.id == GAVL_CODEC_ID_NONE))
+                gavl_stream_clear_compression_fields(dst_s);
+              }
+            
             gavl_dictionary_free(&track);
             gavl_msg_free(&msg);
             }
 
+          //          fprintf(stderr, "Got final header\n");
+          //          gavl_dictionary_dump(g->src.track, 2);
+          
           /* Initialize sources */
           
           if(!start_read(g))
@@ -372,7 +394,7 @@ static int handle_msg_read(void * data, gavl_msg_t * msg)
             /* Forward message */
             gavf_reader_write_gavf_message(g, msg);
             gavf_reader_drain(g, &mode);
-
+            
             bg_media_source_reset(&g->src);
             
             //            gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN,
@@ -381,8 +403,13 @@ static int handle_msg_read(void * data, gavl_msg_t * msg)
             }
           }
           break;
+        case GAVL_CMD_SRC_SET_BUFFER_FORMATS:
+          fprintf(stderr, "Setting buffer formats\n");
+          break;
         }
     }
+  fprintf(stderr, "Writing message:\n");
+  
   gavf_reader_write_gavf_message(g, msg);
   return 1;
   }
@@ -398,6 +425,7 @@ gavf_reader_t * gavf_reader_create()
                        bg_msg_sink_create(handle_msg_read, ret, 1),
                        bg_msg_hub_create(1));
   pthread_mutex_init(&ret->demux_mutex, NULL);
+  pthread_mutex_init(&ret->msg_mutex, NULL);
   
   return ret;
   }
@@ -415,18 +443,23 @@ int gavf_reader_open(gavf_reader_t * g, const char * uri)
   {
   int ret = 0;
   int num_redirections = 0;
-  
+  int io_flags;
+
   if(!(g->io = gavf_reader_open_io(g, uri)))
     return 0;
+
+  io_flags = gavl_io_get_flags(g->io);
   
   /* Read file structure */
-
+  
   while(1)
     {
     //    fprintf(stderr, "Reading chunk header\n");
     if(!gavl_chunk_read_header(g->io, &g->ch))
+      {
+      gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "Reading chunk header failed");
       goto fail;
-
+      }
     //    fprintf(stderr, "Got chunk header %s\n", g->ch.eightcc);
 
     if(gavl_chunk_is(&g->ch, GAVF_HEADER))
@@ -437,8 +470,10 @@ int gavf_reader_open(gavf_reader_t * g, const char * uri)
       const char * new_uri;
 
       if(!gavl_dictionary_read(g->io, &g->mi))
+        {
+        gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "Reading header failed");
         goto fail;
-      
+        }
       /* Check for redirection */
       
       if((t = gavl_get_track(&g->mi, 0)) &&
@@ -447,7 +482,6 @@ int gavf_reader_open(gavf_reader_t * g, const char * uri)
          !strcmp(klass, GAVL_META_CLASS_LOCATION) &&
          gavl_track_get_src(t, GAVL_META_SRC, 0, NULL, &new_uri))
         {
-        int io_flags;
         num_redirections++;
         if(num_redirections > 3)
           {
@@ -464,10 +498,12 @@ int gavf_reader_open(gavf_reader_t * g, const char * uri)
           }
         
         if(!(g->io = gavf_reader_open_io(g, new_uri)))
+          {
+          gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "Opening redirection destination failed");
           goto fail;
-
+          }
         io_flags = gavl_io_get_flags(g->io);
-  
+        
         if(io_flags & GAVL_IO_IS_SOCKET)
           g->bkch_io = gavl_io_create_socket(gavl_io_get_socket(g->io), 3000, 0);
         
@@ -475,7 +511,7 @@ int gavf_reader_open(gavf_reader_t * g, const char * uri)
         }
       else
         {
-#if 0
+#if 1
         fprintf(stderr, "Got media info:\n");
         gavl_dictionary_dump(&g->mi, 2);
         fprintf(stderr, "\n");
@@ -484,7 +520,12 @@ int gavf_reader_open(gavf_reader_t * g, const char * uri)
         }
       }
     }
-
+  
+  if(io_flags & GAVL_IO_IS_UNIX_SOCKET)
+    {
+    g->flags |= FLAG_LOCAL;
+    }
+  
   if(g->bkch_io)
     g->flags |= FLAG_SEPARATE_STREAMS;
   
@@ -586,6 +627,8 @@ int gavf_reader_open(gavf_reader_t * g, const char * uri)
     g->src.track = NULL;
     }
   
+  fprintf(stderr, "gavf_reader_open: %d\n", ret);
+  
   return ret;
   }
 
@@ -602,6 +645,9 @@ int gavf_writer_open(gavf_writer_t * g, const char * uri)
     gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "Won't write binary data to a terminal");
     return 0;
     }
+  
+  if(io_flags & GAVL_IO_IS_UNIX_SOCKET)
+    g->flags |= FLAG_LOCAL;
   
   if(g->bkch_io)
     g->flags |= FLAG_SEPARATE_STREAMS;
@@ -641,6 +687,8 @@ void gavf_writer_flush(gavf_writer_t * g)
 
 void gavf_writer_destroy(gavf_writer_t * g)
   {
+  int i;
+  
   gavf_writer_flush(g);
   if(g->io)
     gavl_io_destroy(g->io);
@@ -653,6 +701,26 @@ void gavf_writer_destroy(gavf_writer_t * g)
     gavl_io_destroy(g->bkch_io);
   if(g->bkch_hub)
     bg_msg_hub_destroy(g->bkch_hub);
+
+  for(i = 0; i < g->num_streams; i++)
+    {
+    if(g->streams[i].hwctx_priv)
+      gavl_hw_ctx_destroy(g->streams[i].hwctx_priv);
+    if(g->streams[i].io)
+      gavl_io_destroy(g->streams[i].io);
+    if(g->streams[i].frames_sent)
+      free(g->streams[i].frames_sent);
+
+    if(g->streams[i].psink)
+      gavl_packet_sink_destroy(g->streams[i].psink);
+    if(g->streams[i].asink)
+      gavl_audio_sink_destroy(g->streams[i].asink);
+    if(g->streams[i].vsink)
+      gavl_video_sink_destroy(g->streams[i].vsink);
+    
+    }
+  if(g->streams)
+    free(g->streams);
   
   free(g);
   }
@@ -667,6 +735,7 @@ void gavf_reader_destroy(gavf_reader_t * g)
   {
   bg_controllable_cleanup(&g->ctrl);
   pthread_mutex_destroy(&g->demux_mutex);
+  pthread_mutex_destroy(&g->msg_mutex);
   free(g);
   }
 
@@ -746,20 +815,7 @@ int gavf_writer_reset(gavf_reader_t * g, int msg_id)
   return 0;
   }
 
-static int create_packet_sink(gavf_writer_t * g, gavf_writer_stream_t * s)
-  {
-  if(g->flags & FLAG_SEPARATE_STREAMS)
-    {
-    s->psink = gavl_packet_sink_create(NULL, gavf_packet_put_separate, s);
-    }
-  else
-    {
-    /* Multiplex */
-    s->packet_flags |= GAVF_PACKET_HAS_STREAM_ID;
-    s->psink = gavl_packet_sink_create(NULL, gavf_packet_put_multiplex, s);
-    }
-  return 1;
-  }
+#if 0
 
 static gavl_audio_frame_t * get_audio_frame_func_separate_write(void * priv)
   {
@@ -769,6 +825,7 @@ static gavl_audio_frame_t * get_audio_frame_func_separate_write(void * priv)
                                    &s->pkt_priv);
   return s->aframe;
   }
+
 
 static gavl_sink_status_t put_audio_frame_func_separate_write(void * priv, gavl_audio_frame_t * frame)
   {
@@ -802,7 +859,7 @@ static gavl_sink_status_t put_audio_frame_func_multiplex(void * priv, gavl_audio
 
 static int create_audio_sink(gavf_writer_t * g, gavf_writer_stream_t * s, gavl_audio_source_t * src)
   {
-  if(!create_packet_sink(g, s))
+  if(!gavf_create_packet_sink(s))
     return 0;
   
   if(g->flags & FLAG_SEPARATE_STREAMS)
@@ -810,12 +867,13 @@ static int create_audio_sink(gavf_writer_t * g, gavf_writer_stream_t * s, gavl_a
     if(HAS_HW)
       {
       
-      }
+      } 
     else
       {
       s->asink = gavl_audio_sink_create(get_audio_frame_func_separate_write,
                                         put_audio_frame_func_separate_write, s,
                                         gavl_audio_source_get_src_format(src));
+      s->aframe = gavl_audio_frame_create(NULL);
       }
     
     }
@@ -865,7 +923,7 @@ static gavl_sink_status_t put_video_frame_func_multiplex(void * priv, gavl_video
 
 static int create_video_sink(gavf_writer_t * g, gavf_writer_stream_t * s, gavl_video_source_t * src)
   {
-  if(!create_packet_sink(g, s))
+  if(!gavf_create_packet_sink(s))
     return 0;
   
   if(g->flags & FLAG_SEPARATE_STREAMS)
@@ -889,6 +947,8 @@ static int create_video_sink(gavf_writer_t * g, gavf_writer_stream_t * s, gavl_v
     }
   return 1;
   }
+#endif
+
 
 static int handle_msg_writer(void * data, gavl_msg_t * msg)
   {
@@ -896,6 +956,9 @@ static int handle_msg_writer(void * data, gavl_msg_t * msg)
 
   gavl_packet_t p;
 
+  fprintf(stderr, "handle_msg_writer\n");
+  gavl_msg_dump(msg, 2);
+  
   gavl_packet_init(&p);
   
   gavl_msg_to_packet(msg, &p);
@@ -994,10 +1057,14 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
 
     g->streams[idx].s = gavl_track_append_stream(g->track, src->streams[i]->type);
     g->streams[idx].writer = g;
-    
-    m_dst = gavl_stream_get_metadata_nc(g->streams[idx].s);
-    m_src = gavl_stream_get_metadata(src->streams[i]->s);
-    gavl_dictionary_copy(m_dst, m_src);
+
+    gavl_dictionary_copy_value(g->streams[idx].s,
+                               src->streams[i]->s,
+                               GAVL_META_METADATA);
+
+    gavl_dictionary_copy_value(g->streams[idx].s,
+                               src->streams[i]->s,
+                               GAVL_META_STREAM_STATS);
 
     gavl_stream_get_id(src->streams[i]->s, &g->streams[idx].stream_id);
     gavl_stream_set_id(g->streams[idx].s, g->streams[idx].stream_id);
@@ -1012,18 +1079,27 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
     switch(src->streams[i]->type)
       {
       case GAVL_STREAM_AUDIO:
-        
         if(src->streams[i]->asrc)
           {
-          const gavl_audio_format_t * fmt = gavl_audio_source_get_src_format(src->streams[i]->asrc);
-          
-          if(!create_audio_sink(g, &g->streams[idx], src->streams[i]->asrc))
-            return 0;
+          const gavl_audio_format_t * fmt;
+          fmt = gavl_audio_source_get_src_format(src->streams[i]->asrc);
           gavl_audio_format_copy(gavl_stream_get_audio_format_nc(g->streams[idx].s), fmt);
+          gavf_create_audio_sink(&g->streams[idx], fmt);
+          gavl_stream_clear_compression_fields(g->streams[idx].s);
           }
         else if(src->streams[i]->psrc)
           {
-          if(!create_packet_sink(g, &g->streams[idx]))
+          /* Check for zero copy */
+          if(g->flags & FLAG_LOCAL)
+            {
+            gavl_stream_stats_t stats;
+            gavl_stream_stats_init(&stats);
+            gavl_stream_get_stats(g->streams[idx].s, &stats);
+            fprintf(stderr, "Got stats:\n");
+            gavl_stream_stats_dump(&stats, 2);
+            }
+          
+          if(!gavf_create_packet_sink(&g->streams[idx]))
             return 0;
           
           gavl_audio_format_copy(gavl_stream_get_audio_format_nc(g->streams[idx].s),
@@ -1034,34 +1110,48 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
       case GAVL_STREAM_OVERLAY:
         if(src->streams[i]->vsrc)
           {
-          create_video_sink(g, &g->streams[idx], src->streams[i]->vsrc);
+          if(src->streams[i]->type == GAVL_STREAM_VIDEO)
+            gavl_video_source_support_hw(src->streams[i]->vsrc);
+          
+          gavf_create_video_sink(&g->streams[idx], gavl_video_source_get_src_format(src->streams[i]->vsrc));
           gavl_video_format_copy(gavl_stream_get_video_format_nc(g->streams[idx].s),
                                  gavl_video_source_get_src_format(src->streams[i]->vsrc));
+          gavl_stream_clear_compression_fields(g->streams[idx].s);
           }
         else if(src->streams[i]->psrc)
           {
-          create_packet_sink(g, &g->streams[idx]);
+          /* Check for zero copy */
+          if(g->flags & FLAG_LOCAL)
+            {
+            gavl_stream_stats_t stats;
+            gavl_stream_stats_init(&stats);
+            gavl_stream_get_stats(g->streams[idx].s, &stats);
+            fprintf(stderr, "Got stats:\n");
+            gavl_stream_stats_dump(&stats, 2);
+            }
+          
+          gavf_create_packet_sink(&g->streams[idx]);
           gavl_video_format_copy(gavl_stream_get_video_format_nc(g->streams[idx].s),
                                  gavl_stream_get_video_format(src->streams[i]->s));
           }
         break;
       case GAVL_STREAM_TEXT:
         if(src->streams[i]->psrc)
-          create_packet_sink(g, &g->streams[idx]);
+          gavf_create_packet_sink(&g->streams[idx]);
         break;
       case GAVL_STREAM_MSG:
         if(src->streams[i]->msghub)
           {
           g->streams[idx].msink = bg_msg_sink_create(handle_msg_writer, &g->streams[idx], 1);
-          create_packet_sink(g, &g->streams[idx]);
+          gavf_create_packet_sink(&g->streams[idx]);
+          bg_msg_hub_connect_sink(src->streams[i]->msghub, g->streams[idx].msink);
           }
         else if(src->streams[i]->psrc)
-          create_packet_sink(g, &g->streams[idx]);
+          gavf_create_packet_sink(&g->streams[idx]);
         break;
       case GAVL_STREAM_NONE:
         break;
       }
-
     idx++;
     }
 
@@ -1086,7 +1176,8 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
   if(g->bkch_io)
     {
     gavl_msg_t msg;
-    fprintf(stderr, "Sending final track info\n");
+    //    fprintf(stderr, "Sending final track info\n");
+    //    gavl_dictionary_dump(g->track, 2);
     
     /* Send final track info */
     gavl_msg_init(&msg);
@@ -1098,7 +1189,7 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
       return 0;
       }
     gavl_msg_free(&msg);
-
+    
     fprintf(stderr, "Sent final track info\n");
     
     }
@@ -1121,7 +1212,7 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
 
       if((socket_fd = gavl_listen_socket_accept(s->server_fd, 3000, NULL)) < 0)
         return 0;
-      fprintf(stderr, "Accepted stream socket %d\n", socket_fd);
+      gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Accepted stream socket %d", socket_fd);
       s->io = gavl_io_create_socket(socket_fd, -1, 1);
       gavl_listen_socket_destroy(s->server_fd);
       s->server_fd = -1;
@@ -1365,7 +1456,19 @@ void gavf_writer_write_discont(gavf_writer_t * g, int mode)
     {
     int i;
     for(i = 0; i < g->num_streams; i++)
+      {
       gavf_write_discont(g->streams[i].io, mode);
+      
+      /* We re-import all frames, because they might have gotten
+         re-created by a decoder */
+      if(g->streams[i].hwctx)
+        gavl_hw_ctx_resync(g->streams[i].hwctx);
+      if(g->streams[i].frames_sent)
+        {
+        free(g->streams[i].frames_sent);
+        g->streams[i].frames_sent = NULL;
+        }
+      }
     }
   else
     gavf_write_discont(g->io, mode);
@@ -1408,4 +1511,48 @@ gavl_source_status_t gavf_read_discont(gavl_io_t * io, int block, int * mode)
       return GAVL_SOURCE_OK;
       }
     }
+  }
+
+int gavf_writer_is_local(const gavf_writer_t * g)
+  {
+  return !!(g->flags & FLAG_LOCAL);
+  }
+
+int gavf_buf_sent(gavf_writer_stream_t * st, int buf_idx)
+  {
+  if(!st->frames_sent)
+    st->frames_sent = calloc(1, gavl_hw_ctx_get_max_frames(st->hwctx));
+  return st->frames_sent[buf_idx];
+  }
+
+void gavf_buf_set_sent(gavf_writer_stream_t * st, int buf_idx)
+  {
+  if(!st->frames_sent)
+    st->frames_sent = calloc(1, gavl_hw_ctx_get_max_frames(st->hwctx));
+  st->frames_sent[buf_idx] = 1;
+  }
+
+
+gavl_dictionary_t * gavf_stream_get_hwinfo_nc(gavl_dictionary_t * s)
+  {
+  return gavl_dictionary_get_dictionary_create(s, HWINFO_KEY);
+  }
+
+const gavl_dictionary_t * gavf_stream_get_hwinfo(const gavl_dictionary_t * s)
+  {
+  return gavl_dictionary_get_dictionary(s, HWINFO_KEY);
+  }
+
+int gavf_send_ack(gavl_io_t * io, gavl_sink_status_t st)
+  {
+  return gavl_io_write_32_le(io, st);
+  }
+
+gavl_sink_status_t gavf_wait_ack(gavl_io_t * io)
+  {
+  uint32_t ret;
+  if(!gavl_io_read_32_le(io, &ret))
+    return GAVL_SINK_ERROR;
+  else
+    return ret;
   }

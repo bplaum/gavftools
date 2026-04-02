@@ -25,6 +25,7 @@
 
 #define GAVFTOOLS_OUT_BACKCHANNEL (1<<0)
 #define GAVFTOOLS_MULTI_THREAD    (1<<1)
+#define GAVFTOOLS_OUT_LOCAL       (1<<2)
 
 extern int gavftools_flags;
 

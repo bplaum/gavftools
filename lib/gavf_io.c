@@ -90,7 +90,7 @@ static int client_handshake(gavl_io_t * io, int wr)
   return ret;
   }
 
-static gavl_io_t * open_socket(char * uri, int wr)
+static gavl_io_t * open_socket(char * uri, int wr, int timeout)
   {
   int result = 0;
   int server_fd;
@@ -98,7 +98,7 @@ static gavl_io_t * open_socket(char * uri, int wr)
   gavl_socket_address_t * addr = NULL;
   gavl_io_t * ret = NULL;
   char * name = NULL;
-  
+
   if(gavl_string_starts_with(uri, GAVF_PROTOCOL_SERVER":///"))
     {
     /* Unix server */
@@ -109,7 +109,7 @@ static gavl_io_t * open_socket(char * uri, int wr)
     if(socket_fd < 0)
       goto fail;
 
-    ret = gavl_io_create_socket(socket_fd, 3000, 0);
+    ret = gavl_io_create_socket(socket_fd, timeout, 0);
 
     if(!server_handshake(ret, wr))
       goto fail;
@@ -137,7 +137,7 @@ static gavl_io_t * open_socket(char * uri, int wr)
     socket_fd = gavl_listen_socket_accept(server_fd, -1, NULL);
     gavl_socket_close(server_fd);
     
-    ret = gavl_io_create_socket(socket_fd, 3000, 0);
+    ret = gavl_io_create_socket(socket_fd, timeout, 0);
 
     if(!server_handshake(ret, wr))
       goto fail;
@@ -150,7 +150,7 @@ static gavl_io_t * open_socket(char * uri, int wr)
       goto fail;
     
     socket_fd = gavl_socket_connect_unix(name);
-    ret = gavl_io_create_socket(socket_fd, 3000, 0);
+    ret = gavl_io_create_socket(socket_fd, timeout, 0);
 
     if(!client_handshake(ret, wr))
       goto fail;
@@ -167,8 +167,8 @@ static gavl_io_t * open_socket(char * uri, int wr)
     if(!gavl_socket_address_set(addr, name, port, SOCK_STREAM))
       goto fail;
     
-    socket_fd = gavl_socket_connect_inet(addr, 3000);
-    ret = gavl_io_create_socket(socket_fd, 3000, 0);
+    socket_fd = gavl_socket_connect_inet(addr, timeout);
+    ret = gavl_io_create_socket(socket_fd, timeout, 0);
     
     if(!client_handshake(ret, wr))
       goto fail;
@@ -212,7 +212,7 @@ gavl_io_t * gavf_reader_open_io(gavf_reader_t * g, const char * uri1)
   
   else 
     {
-    if(!(ret = open_socket(uri, 0)))
+    if(!(ret = open_socket(uri, 0, timeout)))
       {
       struct stat st;
 
@@ -236,7 +236,7 @@ gavl_io_t * gavf_reader_open_io(gavf_reader_t * g, const char * uri1)
   if(io_flags & GAVL_IO_IS_REGULAR)
     g->flags |= FLAG_ON_DISK;
   if(io_flags & GAVL_IO_IS_SOCKET)
-    g->bkch_io = gavl_io_create_socket(gavl_io_get_socket(ret), 3000, 0);
+    g->bkch_io = gavl_io_create_socket(gavl_io_get_socket(ret), timeout, 0);
 
   fail:
   
@@ -249,11 +249,21 @@ gavl_io_t * gavf_writer_open_io(gavf_writer_t * g, const char * uri1)
   int io_flags;
   gavl_io_t * ret;
   char * uri;
+  gavl_dictionary_t url_vars;
+  int timeout = 1000 * 60;
+  char * unix_socket = NULL;
+  char * new_addr = NULL;
+  
+  
+  gavl_dictionary_init(&url_vars);
   
   if(uri1 && gavl_string_starts_with_i(uri1, "file://"))
     uri1 += 7;
   
   uri = gavl_strdup(uri1);
+
+  gavl_url_get_vars(uri, &url_vars);
+  gavl_dictionary_get_int(&url_vars, "timeout", &timeout);
   
   if(!uri || gavl_string_starts_with(uri, GAVF_PROTOCOL"://-"))
     ret = gavl_io_create_file(stdout, 1, 0, 0);
@@ -261,7 +271,7 @@ gavl_io_t * gavf_writer_open_io(gavf_writer_t * g, const char * uri1)
     {
     FILE * f;
 
-    if(!(ret = open_socket(uri, 1)))
+    if(!(ret = open_socket(uri, 1, timeout)))
       {
       struct stat st;
 
@@ -295,9 +305,6 @@ gavl_io_t * gavf_writer_open_io(gavf_writer_t * g, const char * uri1)
     gavl_io_t * sub_io;
     int server_fd;
     int fd;
-    
-    char * unix_socket = NULL;
-    char * new_addr = NULL;
     
     gavl_dictionary_t mi;
     gavl_dictionary_t * dict;
@@ -345,8 +352,15 @@ gavl_io_t * gavf_writer_open_io(gavf_writer_t * g, const char * uri1)
    
   fail:
 
+  gavl_dictionary_free(&url_vars);
+  
   if(uri)
     free(uri);
+
+  if(unix_socket)
+    free(unix_socket);
+  if(new_addr)
+    free(new_addr);
   
   return ret;
   }
