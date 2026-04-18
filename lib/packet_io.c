@@ -337,6 +337,7 @@ gavl_source_status_t gavf_read_packet_data(gavl_io_t * io,
     }
   }
 
+#if 0
 gavl_source_status_t gavf_packet_skip_data(gavl_io_t * io,
                                            const gavl_packet_t * p)
   {
@@ -348,6 +349,7 @@ gavl_source_status_t gavf_packet_skip_data(gavl_io_t * io,
   gavl_io_skip(io, size);
   return GAVL_SOURCE_OK;
   }
+#endif
 
 gavl_source_status_t gavf_read_packet(gavl_io_t * io,
                                       gavl_packet_t * p)

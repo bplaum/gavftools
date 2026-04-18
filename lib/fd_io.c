@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <sys/socket.h>
 #include <string.h>
+#include <unistd.h>
 
 
 #include <gavf.h>
@@ -25,10 +26,10 @@ typedef struct
 
 /* Read/write buffers via Unix domain sockets */
 
-int gavf_write_hw_buffers(gavl_io_t * io, const gavl_hw_buffer_t * buffers, int num, void * ext_data, int ext_len)
+int gavf_write_hw_buffers(gavl_io_t * io, const gavl_hw_buffer_t * buffers, int num)
   {
   fd_pass_meta_t meta;
-  struct iovec iov[2];
+  struct iovec iov[1];
   size_t cmsg_size;
   char  *cmsg_buf = NULL;
   struct msghdr msg;
@@ -38,6 +39,8 @@ int gavf_write_hw_buffers(gavl_io_t * io, const gavl_hw_buffer_t * buffers, int 
   int fds[GAVL_MAX_PLANES];
   int fd;
   int result = 0;
+
+  fprintf(stderr, "gavf_write_hw_buffers\n");
   
   if((fd = gavl_io_get_socket(io)) < 0)
     {
@@ -74,11 +77,6 @@ int gavf_write_hw_buffers(gavl_io_t * io, const gavl_hw_buffer_t * buffers, int 
   iov[0].iov_base = &meta;
   iov[0].iov_len  = sizeof(meta);
 
-  if(ext_data)
-    {
-    iov[1].iov_base = ext_data;
-    iov[1].iov_len  = ext_len;
-    }
   
   /* Ancillary data: SCM_RIGHTS carries the raw file descriptors.
    * CMSG_SPACE rounds up to the required alignment. */
@@ -88,7 +86,7 @@ int gavf_write_hw_buffers(gavl_io_t * io, const gavl_hw_buffer_t * buffers, int 
     goto fail;
   
   msg.msg_iov        = iov;
-  msg.msg_iovlen     = 1 + !!ext_data;
+  msg.msg_iovlen     = 1;
   msg.msg_control    = cmsg_buf;
   msg.msg_controllen = cmsg_size;
   
@@ -112,10 +110,10 @@ int gavf_write_hw_buffers(gavl_io_t * io, const gavl_hw_buffer_t * buffers, int 
   return result;
   }
 
-int gavf_read_hw_buffers(gavl_io_t * io, gavl_hw_buffer_t * buffers, int * num, void * ext_data, int ext_len)
+int gavf_read_hw_buffers(gavl_io_t * io, gavl_hw_buffer_t * buffers, int * num)
   {
   fd_pass_meta_t meta;
-  struct iovec iov[2];
+  struct iovec iov[1];
 
   size_t cmsg_size;
   char  *cmsg_buf = NULL;
@@ -135,17 +133,12 @@ int gavf_read_hw_buffers(gavl_io_t * io, gavl_hw_buffer_t * buffers, int * num, 
   iov[0].iov_base = &meta;
   iov[0].iov_len  = sizeof(meta);
 
-  if(ext_data)
-    {
-    iov[1].iov_base = ext_data;
-    iov[1].iov_len  = ext_len;
-    }
   
   cmsg_size = CMSG_SPACE(GAVL_MAX_PLANES * sizeof(int));
   cmsg_buf  = calloc(1, cmsg_size);
 
   msg.msg_iov        = iov;
-  msg.msg_iovlen     = 1 + !!ext_data;
+  msg.msg_iovlen     = 1;
   msg.msg_control    = cmsg_buf;
   msg.msg_controllen = cmsg_size;
 
@@ -163,7 +156,7 @@ int gavf_read_hw_buffers(gavl_io_t * io, gavl_hw_buffer_t * buffers, int * num, 
     goto fail;
     }
 
-  if(meta.n_fds > *num)
+  if(num && (meta.n_fds > *num))
     {
     gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "Insufficient buffers (%d > %d)", meta.n_fds, *num);
     goto fail;
@@ -190,15 +183,25 @@ int gavf_read_hw_buffers(gavl_io_t * io, gavl_hw_buffer_t * buffers, int * num, 
         }
       
       memcpy(fds, CMSG_DATA(cmsg), meta.n_fds * sizeof(int));
-      memset(buffers, 0, meta.n_fds * sizeof(buffers[0]));
-      
-      for(i = 0; i < meta.n_fds; i++)
+
+      if(buffers && num)
         {
-        buffers[i].map_offset = meta.planes[i].map_offset;
-        buffers[i].map_len    = meta.planes[i].map_len;
-        buffers[i].fd         = fds[i];
+        memset(buffers, 0, meta.n_fds * sizeof(buffers[0]));
+      
+        for(i = 0; i < meta.n_fds; i++)
+          {
+          buffers[i].map_offset = meta.planes[i].map_offset;
+          buffers[i].map_len    = meta.planes[i].map_len;
+          buffers[i].fd         = fds[i];
+          }
+        *num = meta.n_fds;
         }
-      *num = meta.n_fds;
+      else
+        {
+        for(i = 0; i < meta.n_fds; i++)
+          close(fds[i]);
+        } 
+      
       result = 1;
       break;
       }

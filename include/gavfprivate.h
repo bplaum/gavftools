@@ -12,10 +12,15 @@
 
 #define GAVF_PROTOCOL_STRING "GAVF/1.0"
 
+#define STREAM_HAS_ACK        (1<<0)
+
+
 /* Metadata tags */
 
 typedef struct
   {
+  int flags;
+  
   gavl_packet_buffer_t * buf;
   gavf_reader_t * reader;     // Reader we belong to
   gavl_io_t * io;
@@ -166,7 +171,7 @@ gavl_source_status_t gavf_read_packet_data(gavl_io_t * io,
 gavl_source_status_t gavf_read_packet(gavl_io_t * io,
                                       gavl_packet_t * p);
 
-gavl_source_status_t gavf_packet_skip_data(gavl_io_t * io,
+gavl_source_status_t gavf_packet_skip_data(bg_media_source_stream_t * st,
                                            const gavl_packet_t * packet);
 
 gavl_sink_status_t gavf_write_packet(gavl_io_t * io,
@@ -174,15 +179,18 @@ gavl_sink_status_t gavf_write_packet(gavl_io_t * io,
                                      int stream_flags);
 
 gavl_sink_status_t gavf_write_discont(gavl_io_t * io, int mode);
-gavl_source_status_t gavf_read_discont(gavl_io_t * io, int block, int * mode);
+
+//gavl_source_status_t gavf_read_discont(gavl_io_t * io, int block, int * mode);
+
+gavl_source_status_t gavf_stream_read_discont(bg_media_source_stream_t * st,
+                                              int block, int * mode);
 
 void gavf_reader_poll_msg(gavf_reader_t * g);
 
 /* Read/write buffers via Unix domain sockets */
 
-int gavf_write_hw_buffers(gavl_io_t * io, const gavl_hw_buffer_t * buffers, int num, void * ext_data, int ext_len);
-int gavf_read_hw_buffers(gavl_io_t * io, gavl_hw_buffer_t * buffers, int * num, void * ext_data, int ext_len);
+int gavf_write_hw_buffers(gavl_io_t * io, const gavl_hw_buffer_t * buffers, int num);
+int gavf_read_hw_buffers(gavl_io_t * io, gavl_hw_buffer_t * buffers, int * num);
 
 int gavf_send_ack(gavl_io_t * io, gavl_sink_status_t st);
 gavl_sink_status_t gavf_wait_ack(gavl_io_t * io);
-

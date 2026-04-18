@@ -606,6 +606,7 @@ int gavftools_init_sink(bg_media_source_t * src)
   return 1;
   }
 
+/* Called from main()'s thread */
 int gavftools_handle_sink_message(gavl_msg_t * msg)
   {
   switch(msg->NS)
@@ -625,8 +626,10 @@ int gavftools_handle_sink_message(gavl_msg_t * msg)
           scale = gavl_msg_get_arg_int(msg, 1);
 
           fprintf(stderr, "Got seek command %"PRId64" %d\n", time, scale);
-
+          
           gavftools_stop();
+
+          fprintf(stderr, "Stopped %p\n", gavftools_writer);
           
           if(gavftools_writer)
             gavf_writer_write_discont(gavftools_writer, GAVF_PACKET_DISCONT_RESYNC);
@@ -869,7 +872,9 @@ void gavftools_stop(void)
     int i;
     for(i = 0; i < num_gavftools_streams; i++)
       {
+      fprintf(stderr, "Stopping thread %d\n", i);
       thread_stop(&gavftools_streams[i].thread);
+      fprintf(stderr, "Stopped thread %d\n", i);
       }
     }
   else

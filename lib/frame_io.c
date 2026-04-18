@@ -63,7 +63,8 @@ static gavl_source_status_t read_audio_frame_memfd(void * data, gavl_audio_frame
   gavl_source_status_t status;
   bg_media_source_stream_t * s = data;
   gavf_reader_stream_t * st = s->user_data;
-
+  uint32_t size;
+  
   if(st->aframe_hw)
     {
     gavl_hw_audio_frame_unref(st->aframe_hw);
@@ -75,11 +76,17 @@ static gavl_source_status_t read_audio_frame_memfd(void * data, gavl_audio_frame
   if((status = gavf_read_packet_header(st->io, &st->pkt_priv)) != GAVL_SOURCE_OK)
     return status;
 
+  //  fprintf(stderr, "read_audio_frame_memfd: %d\n", st->pkt_priv.buf_idx);
+  
   if(st->pkt_priv.buf_idx < 0)
     {
     /* Error */
     return GAVL_SOURCE_EOF;
     }
+
+  /* Skip size */
+  if(!gavl_io_read_uint32v(st->io, &size))
+    return GAVL_SOURCE_EOF;
   
   if(st->pkt_priv.flags & GAVF_PACKET_HAS_BUFFERS)
     {
@@ -98,7 +105,7 @@ static gavl_source_status_t read_audio_frame_memfd(void * data, gavl_audio_frame
       *frame = gavl_hw_ctx_create_import_aframe(st->hwctx, st->pkt_priv.buf_idx);
       buf = (*frame)->storage;
       }
-    if(!gavf_read_hw_buffers(st->io, buf, &num, NULL, 0))
+    if(!gavf_read_hw_buffers(st->io, buf, &num))
       return GAVL_SOURCE_EOF;
     }
   else
@@ -135,6 +142,7 @@ static gavl_source_status_t read_video_frame_fd(void * data, gavl_video_frame_t 
   gavl_source_status_t status;
   bg_media_source_stream_t * s = data;
   gavf_reader_stream_t * st = s->user_data;
+  uint32_t size;
 
   if(st->vframe_hw)
     {
@@ -152,6 +160,10 @@ static gavl_source_status_t read_video_frame_fd(void * data, gavl_video_frame_t 
     gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "Cannot read frame: buf_idx: %d", st->pkt_priv.buf_idx);
     return GAVL_SOURCE_EOF;
     }
+
+  /* Skip size */
+  if(!gavl_io_read_uint32v(st->io, &size))
+    return GAVL_SOURCE_EOF;
   
   if(st->pkt_priv.flags & GAVF_PACKET_HAS_BUFFERS)
     {
@@ -172,7 +184,7 @@ static gavl_source_status_t read_video_frame_fd(void * data, gavl_video_frame_t 
           *frame = gavl_hw_ctx_create_import_vframe(st->hwctx, st->pkt_priv.buf_idx);
           buf = (*frame)->storage;
           }
-        if(!gavf_read_hw_buffers(st->io, buf, &num, NULL, 0))
+        if(!gavf_read_hw_buffers(st->io, buf, &num))
           return GAVL_SOURCE_EOF;
         }
         break;
@@ -197,7 +209,16 @@ static gavl_source_status_t read_video_frame_fd(void * data, gavl_video_frame_t 
           dma = (*frame)->storage;
           }
         dma->num_buffers = GAVL_MAX_PLANES;
-        if(!gavf_read_hw_buffers(st->io, dma->buffers, &dma->num_buffers, &dma->frame_info, sizeof(dma->frame_info)))
+
+        if(size != sizeof(dma->frame_info))
+          {
+          gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "payload size mismatch for DMA video frame");
+          return GAVL_SOURCE_EOF;
+          }
+          if(gavl_io_read_data(st->io, (uint8_t*)&dma->frame_info, size) < size)
+          return GAVL_SOURCE_EOF;
+         
+        if(!gavf_read_hw_buffers(st->io, dma->buffers, &dma->num_buffers))
           return GAVL_SOURCE_EOF;
         for(i = 0; i < dma->frame_info.num_planes; i++)
           (*frame)->strides[i] = dma->frame_info.planes[i].stride;
@@ -253,6 +274,7 @@ int gavf_create_audio_source(bg_media_source_stream_t * s)
       s->asrc_priv =
         gavl_audio_source_create(func, s, GAVL_SOURCE_SRC_ALLOC,
                                  gavl_stream_get_audio_format(s->s));
+      st->flags |= STREAM_HAS_ACK;
       s->asrc = s->asrc_priv;
       return 1;
       }
@@ -299,6 +321,7 @@ int gavf_create_video_source(bg_media_source_stream_t * s)
         gavl_video_source_create(func, s, GAVL_SOURCE_SRC_ALLOC,
                                  gavl_stream_get_video_format(s->s));
       s->vsrc = s->vsrc_priv;
+      st->flags |= STREAM_HAS_ACK;
       return 1;
       }
     else
@@ -325,7 +348,8 @@ static gavl_sink_status_t put_audio_memfd(void * data, gavl_audio_frame_t * fram
   
   gavl_audio_frame_to_packet_metadata(frame, &st->pkt_priv);
 
-  //  fprintf(stderr, "put_audio_memfd %d\n", frame->buf_idx);
+  //  fprintf(stderr, "put_audio_memfd %d %d %d\n", frame->buf_idx, st->pkt_priv.buf_idx,
+  //          gavl_hw_audio_frame_refcount(frame));
   
   if(!gavf_buf_sent(st, frame->buf_idx))
     {
@@ -335,8 +359,11 @@ static gavl_sink_status_t put_audio_memfd(void * data, gavl_audio_frame_t * fram
 
   if((status = gavf_write_packet_header(st->io, &st->pkt_priv, packet_flags) != GAVL_SINK_OK))
     return status;
+
+  if((status = gavf_write_packet_data(st->io, &st->pkt_priv) != GAVL_SINK_OK))
+    return status;
   
-  if(send_fds && !gavf_write_hw_buffers(st->io, frame->storage, 1, NULL, 0))
+  if(send_fds && !gavf_write_hw_buffers(st->io, frame->storage, 1))
     return GAVL_SINK_ERROR;
 
   gavf_buf_set_sent(st, frame->buf_idx);
@@ -471,8 +498,11 @@ static gavl_sink_status_t put_video_memfd(void * data, gavl_video_frame_t * fram
   
   if((status = put_video_hw_start(data, frame, &send_fds) != GAVL_SINK_OK))
     return status;
+
+  if(!gavl_io_write_uint32v(st->io, 0))
+    return GAVL_SINK_ERROR;
   
-  if(send_fds && !gavf_write_hw_buffers(st->io, frame->storage, 1, NULL, 0))
+  if(send_fds && !gavf_write_hw_buffers(st->io, frame->storage, 1))
     return GAVL_SINK_ERROR;
 
   return put_video_hw_end(st, frame);
@@ -484,18 +514,28 @@ static gavl_sink_status_t put_video_dmabuf(void * data, gavl_video_frame_t * fra
   int send_fds = 0;
   gavf_writer_stream_t * st = data;
 
-  //  fprintf(stderr, "put_video_dmabuf: buf_idx: %d strides: %d %d %d\n", frame->buf_idx,
+  //  fprintf(stderr, "put_video_dmabuf: buf_idx: %d\n", frame->buf_idx);
+  
+  // fprintf(stderr, "put_video_dmabuf: buf_idx: %d strides: %d %d %d\n", frame->buf_idx,
   //          frame->strides[0], frame->strides[1], frame->strides[2]);
   
   if((status = put_video_hw_start(data, frame, &send_fds) != GAVL_SINK_OK))
     return status;
-
+  
   if(send_fds)
     {
     gavl_dmabuf_video_frame_t * dma = frame->storage;
-    if(!gavf_write_hw_buffers(st->io, dma->buffers, dma->num_buffers, &dma->frame_info, sizeof(dma->frame_info)))
+
+    if(!gavl_io_write_uint32v(st->io, sizeof(dma->frame_info)) ||
+       (gavl_io_write_data(st->io, (uint8_t*)&dma->frame_info,
+                           sizeof(dma->frame_info)) < sizeof(dma->frame_info)))
+      return GAVL_SINK_ERROR;
+    
+    if(!gavf_write_hw_buffers(st->io, dma->buffers, dma->num_buffers))
       return GAVL_SINK_ERROR;
     }
+  else if(!gavl_io_write_uint32v(st->io, 0))
+    return GAVL_SINK_ERROR;
   
   return put_video_hw_end(st, frame);
   }

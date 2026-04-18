@@ -149,7 +149,7 @@ int gavf_writer_is_local(const gavf_writer_t *);
 int gavf_reader_open(gavf_reader_t * g, const char * uri);
 int gavf_writer_open(gavf_writer_t * g, const char * uri);
 
-int gavf_reader_skip_packets(gavf_reader_t * g);
+// int gavf_reader_skip_packets(gavf_reader_t * g);
 int gavf_reader_select_track(gavf_reader_t * g, int t);
 
 int gavf_writer_send_media_info(gavf_writer_t * g, const gavl_dictionary_t * mi);

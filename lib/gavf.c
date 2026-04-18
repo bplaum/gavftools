@@ -20,6 +20,9 @@
 
 #define HAS_HW 0
 
+static gavl_source_status_t skip_packet_data_mux(gavl_io_t * io, gavl_packet_t * header);
+
+
 void gavf_reader_poll_msg(gavf_reader_t * g)
   {
   if(!g->msg_stream)
@@ -392,10 +395,12 @@ static int handle_msg_read(void * data, gavl_msg_t * msg)
             {
             int mode = 0;
             /* Forward message */
+            fprintf(stderr, "seek gavf\n");
             gavf_reader_write_gavf_message(g, msg);
             gavf_reader_drain(g, &mode);
             
             bg_media_source_reset(&g->src);
+            fprintf(stderr, "seek gavf done\n");
             
             //            gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN,
             //                     "Seeking in non-file streams not supported yet");
@@ -739,6 +744,17 @@ void gavf_reader_destroy(gavf_reader_t * g)
   free(g);
   }
 
+static gavl_source_status_t skip_packet_data_mux(gavl_io_t * io, gavl_packet_t * header)
+  {
+  uint32_t size;
+    
+  if(!gavl_io_read_uint32v(io, &size))
+    return GAVL_SOURCE_EOF;
+    
+  gavl_io_skip(io, size);
+  return GAVL_SOURCE_OK;
+  }
+
 
 gavl_source_status_t gavf_demux_iteration(gavf_reader_t * g)
   {
@@ -768,11 +784,8 @@ gavl_source_status_t gavf_demux_iteration(gavf_reader_t * g)
     gavl_packet_sink_put_packet(sink, p);
     }
   else
-    {
-    /* Skip */
-    if((st = gavf_packet_skip_data(g->io, &header)) != GAVL_SOURCE_OK)
-      return st;
-    }
+    skip_packet_data_mux(g->io, &header);
+  
   return GAVL_SOURCE_OK;
   }
 
@@ -786,29 +799,6 @@ bg_controllable_t * gavf_reader_get_controllable(gavf_reader_t * g)
   return &g->ctrl;
   }
 
-int gavf_reader_skip_packets(gavf_reader_t * g)
-  {
-  gavl_source_status_t st;
-  gavl_packet_t p;
-  gavl_packet_init(&p);
-  while(1)
-    {
-    gavl_packet_init(&p);
-    if((st = gavf_read_packet_header(g->io, &p)) != GAVL_SOURCE_OK)
-      return 0;
-
-    if(p.id == GAVL_META_STREAM_ID_MSG_GAVF)
-      {
-      /* TODO: Parse packet */
-      }
-    else
-      {
-      gavf_packet_skip_data(g->io, &p);
-      }
-    }
-
-
-  }
 
 int gavf_writer_reset(gavf_reader_t * g, int msg_id)
   {
@@ -1393,21 +1383,37 @@ int gavf_read_backpointer(gavl_io_t * io, const char * eightcc,
     return 0;
   }
 
+
+
 gavl_source_status_t gavf_reader_drain(gavf_reader_t * g, int * mode_p)
   {
   int mode;
 
   *mode_p = 0;
+
+  fprintf(stderr, "gavf_reader_drain\n");
   
   if(g->flags & FLAG_SEPARATE_STREAMS)
     {
     int done = 0;
     int i;
-
+    /* We abuse idx_pos to signal, that the stream is synchronized */
     for(i = 0; i < g->src.num_streams; i++)
       {
       gavf_reader_stream_t * st = g->src.streams[i]->user_data;
       st->idx_pos = 0;
+
+      if(st->vframe_hw)
+        {
+        gavl_hw_video_frame_unref(st->vframe_hw);
+        st->vframe_hw = NULL;
+        }
+      if(st->aframe_hw)
+        {
+        gavl_hw_audio_frame_unref(st->aframe_hw);
+        st->aframe_hw = NULL;
+        }
+      
       }
     
     while(!done)
@@ -1421,7 +1427,7 @@ gavl_source_status_t gavf_reader_drain(gavf_reader_t * g, int * mode_p)
         
         if(!st->idx_pos)
           {
-          status = gavf_read_discont(st->io, 0, &mode);
+          status = gavf_stream_read_discont(g->src.streams[i], 0, &mode);
           
           if(status == GAVL_SOURCE_AGAIN)
             done = 0;
@@ -1439,18 +1445,40 @@ gavl_source_status_t gavf_reader_drain(gavf_reader_t * g, int * mode_p)
           }
         }
       }
-    //    fprintf(stderr, "Reading discont finished: %08x\n", *mode_p);
+    fprintf(stderr, "gavf_reader_drain finished: %08x\n", *mode_p);
     return GAVL_SOURCE_OK;
     }
   else
     {
-    return gavf_read_discont(g->io, 1, mode_p);
+    while(1)
+      {
+      gavl_packet_t pkt;
+      gavl_packet_init(&pkt);
+      if(gavf_read_packet_header(g->io, &pkt) != GAVL_SOURCE_OK)
+        {
+        gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "gavf_reader_drain: Reading header failed");
+        return GAVL_SOURCE_EOF;
+        }
+
+      if(skip_packet_data_mux(g->io, &pkt) != GAVL_SOURCE_OK)
+        {
+        gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "gavf_reader_drain: Skipping data failed");
+        return GAVL_SOURCE_EOF;
+        }
+    
+      if(pkt.flags & GAVF_PACKET_DISCONT)
+        {
+        if(mode_p)
+          *mode_p = (pkt.flags & GAVF_PACKET_DISCONT);
+        return GAVL_SOURCE_OK;
+        }
+      }
     }
   }
   
 void gavf_writer_write_discont(gavf_writer_t * g, int mode)
   {
-  //  fprintf(stderr, "write discont: %08x\n", mode);
+  fprintf(stderr, "write discont: %08x\n", mode);
   
   if(g->flags & FLAG_SEPARATE_STREAMS)
     {
@@ -1461,8 +1489,8 @@ void gavf_writer_write_discont(gavf_writer_t * g, int mode)
       
       /* We re-import all frames, because they might have gotten
          re-created by a decoder */
-      if(g->streams[i].hwctx)
-        gavl_hw_ctx_resync(g->streams[i].hwctx);
+      if(g->streams[i].hwctx_priv)
+        gavl_hw_ctx_resync(g->streams[i].hwctx_priv);
       if(g->streams[i].frames_sent)
         {
         free(g->streams[i].frames_sent);
@@ -1481,6 +1509,52 @@ gavl_sink_status_t gavf_write_discont(gavl_io_t * io, int mode)
   return gavf_write_packet(io, &pkt, mode & GAVF_PACKET_DISCONT);
   }
 
+gavl_source_status_t gavf_stream_read_discont(bg_media_source_stream_t * s,
+                                              int block, int * mode)
+  {
+  gavl_packet_t pkt;
+  gavf_reader_stream_t * st = s->user_data;
+
+  while(1)
+    {
+    if(!block && !gavl_io_can_read(st->io, 0))
+      return GAVL_SOURCE_AGAIN;
+
+    gavl_packet_init(&pkt);
+    
+    if(gavf_read_packet_header(st->io, &pkt) != GAVL_SOURCE_OK)
+      {
+      gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "gavf_stream_read_discont: Reading header failed");
+      return GAVL_SOURCE_EOF;
+      }
+
+    if(skip_packet_data_mux(st->io, &pkt) != GAVL_SOURCE_OK)
+      {
+      gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "gavf_stream_read_discont: Skipping data failed");
+      return GAVL_SOURCE_EOF;
+      }
+    if(pkt.flags & GAVF_PACKET_HAS_BUFFERS)
+      {
+      /* Read buffers */
+      gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "gavf_stream_read_discont: Reading buffers");
+      gavf_read_hw_buffers(st->io, NULL, NULL);
+    
+      }
+    
+    if(pkt.flags & GAVF_PACKET_DISCONT)
+      {
+      if(mode)
+        *mode = (pkt.flags & GAVF_PACKET_DISCONT);
+      return GAVL_SOURCE_OK;
+      }
+    /* Send ack only for payload packets */
+    if(st->flags & STREAM_HAS_ACK)
+      gavf_send_ack(st->io, GAVL_SINK_OK);
+    
+    }
+  }
+
+#if 0
 gavl_source_status_t gavf_read_discont(gavl_io_t * io, int block, int * mode)
   {
   gavl_packet_t pkt;
@@ -1491,7 +1565,7 @@ gavl_source_status_t gavf_read_discont(gavl_io_t * io, int block, int * mode)
       return GAVL_SOURCE_AGAIN;
 
     gavl_packet_init(&pkt);
-
+    
     if(gavf_read_packet_header(io, &pkt) != GAVL_SOURCE_OK)
       {
       gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "gavf_read_discont: Reading header failed");
@@ -1512,6 +1586,7 @@ gavl_source_status_t gavf_read_discont(gavl_io_t * io, int block, int * mode)
       }
     }
   }
+#endif
 
 int gavf_writer_is_local(const gavf_writer_t * g)
   {
