@@ -55,25 +55,6 @@ int main(int argc, char ** argv)
 
   gavftools_run();
   
-#if 0 
-  while(1)
-    {
-    /* Check for CTRL+C */
-    if(bg_got_sigint())
-      break;
-    
-    /* Handle sink messages */
-    
-    /* Handle media transfers */
-    
-    if(gavftools_iteration_singlethread(NULL) == GAVL_SOURCE_EOF)
-      {
-      gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Got EOF");
-      break;
-      }
-    }
-#endif
-  
   gavftools_cleanup();
   
   return EXIT_SUCCESS;

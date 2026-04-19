@@ -10,11 +10,14 @@ AM_CFLAGS = \
 
 AM_LDFLAGS = @GMERLIN_EXE_LDFLAGS@
 
-bin_PROGRAMS = gavf-cat gavf-info
+bin_PROGRAMS = gavf-cat gavf-info gavf-encode
 
 gavf_cat_SOURCES = gavf-cat.c
+gavf_encode_SOURCES = gavf-encode.c
+
 gavf_info_SOURCES = gavf-info.c
 
 gavf_cat_LDADD = ../lib/libgavf.la @GMERLIN_LIBS@ @GAVL_LIBS@
 gavf_info_LDADD = ../lib/libgavf.la @GMERLIN_LIBS@ @GAVL_LIBS@
+gavf_encode_LDADD = ../lib/libgavf.la @GMERLIN_LIBS@ @GAVL_LIBS@
 

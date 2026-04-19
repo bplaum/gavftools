@@ -33,6 +33,7 @@ extern char * gavftools_src_location;
 extern char * gavftools_dst_location;
 
 extern bg_media_source_t * gavftools_src;
+extern bg_plugin_handle_t * gavftools_input_handle;
 
 /* Codec options */
 extern char * gavftools_ac_options;
@@ -42,6 +43,7 @@ extern char * gavftools_oc_options;
 #define STREAM_DISCONT         (1<<0)
 #define STREAM_HAVE_SINK_FRAME (1<<1)
 #define STREAM_HAVE_SRC_FRAME  (1<<2)
+#define STREAM_B_FRAMES        (1<<3)
 
 #define THREAD_STATE_INIT     0
 #define THREAD_STATE_RUNNING  1
@@ -79,20 +81,32 @@ typedef struct gavftools_stream_s
   /* Process one packet / frame */
   gavl_source_status_t (*process)(struct gavftools_stream_s * s);
 
+  /* The following are needed for non-continuous streams only */
   gavl_packet_t      * pkt;
   gavl_video_frame_t * vframe;
 
   gavftools_thread_t thread;
-  
+
+  /* For encoding */
+  int out_idx;
   } gavftools_stream_t;
 
 extern int num_gavftools_streams;
 extern gavftools_stream_t * gavftools_streams;
 
+gavl_source_status_t gavftools_process_stream_audio(gavftools_stream_t * s);
+gavl_source_status_t gavftools_process_stream_video(gavftools_stream_t * s);
+gavl_source_status_t gavftools_process_stream_video_discont(gavftools_stream_t * s);
+gavl_source_status_t gavftools_process_stream_packet(gavftools_stream_t * s);
+gavl_source_status_t gavftools_process_stream_packet_discont(gavftools_stream_t * s);
+
+
 void gavftools_init(void);
 int gavftools_open_sink(void);
 
 int gavftools_init_src(void);
+int gavftools_open_src(void);
+
 int gavftools_init_sink(bg_media_source_t * src);
 int gavftools_handle_sink_message(gavl_msg_t * msg);
 

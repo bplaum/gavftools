@@ -116,7 +116,25 @@ static int wait_for_message(gavl_msg_t * msg)
   
   }
 
-int gavftools_init_src()
+int gavftools_open_src(void)
+  {
+  gavl_dictionary_t track;
+  int num_variants = 0;
+  
+  gavl_dictionary_init(&track);
+  gavl_track_from_location(&track, gavftools_src_location);
+  if(!(gavftools_input_handle = bg_load_track(&track, 0, &num_variants)))
+    {
+    gavl_dictionary_free(&track);
+    return 0;
+    }
+  gavftools_input_plugin = (bg_input_plugin_t*)gavftools_input_handle->plugin;
+  gavftools_src = gavftools_input_plugin->get_src(gavftools_input_handle->priv);
+  gavl_dictionary_free(&track);
+  return 1;
+  }
+
+int gavftools_init_src(void)
   {
   gavl_msg_t msg;
   int done;
@@ -289,25 +307,15 @@ int gavftools_init_src()
     }
   else /* No commands expected, let's initialize the source ourselves */
     {
-    gavl_dictionary_t track;
-    int num_variants = 0;
-
-    gavl_dictionary_init(&track);
-    gavl_track_from_location(&track, gavftools_src_location);
-    if(!(gavftools_input_handle = bg_load_track(&track, 0, &num_variants)))
-      {
-      gavl_dictionary_free(&track);
+    if(!gavftools_open_src())
       return 0;
-      }
-    gavftools_input_plugin = (bg_input_plugin_t*)gavftools_input_handle->plugin;
-    gavftools_src = gavftools_input_plugin->get_src(gavftools_input_handle->priv);
+      
     
     set_stream_actions_auto(GAVL_STREAM_AUDIO);
     set_stream_actions_auto(GAVL_STREAM_VIDEO);
     set_stream_actions_auto(GAVL_STREAM_TEXT);
     set_stream_actions_auto(GAVL_STREAM_OVERLAY);
     
-    gavl_dictionary_free(&track);
 
     enable_msg_stream();
     
@@ -332,7 +340,7 @@ int gavftools_open_sink()
   return 1;
   }
 
-static gavl_source_status_t process_stream_audio(gavftools_stream_t * s)
+gavl_source_status_t gavftools_process_stream_audio(gavftools_stream_t * s)
   {
   gavl_audio_frame_t * aframe = gavl_audio_sink_get_frame(s->asink);
   gavl_source_status_t src_st;
@@ -351,7 +359,7 @@ static gavl_source_status_t process_stream_audio(gavftools_stream_t * s)
   return GAVL_SOURCE_OK;
   }
 
-static gavl_source_status_t process_stream_video(gavftools_stream_t * s)
+gavl_source_status_t gavftools_process_stream_video(gavftools_stream_t * s)
   {
   gavl_video_frame_t * vframe = gavl_video_sink_get_frame(s->vsink);
   gavl_source_status_t src_st;
@@ -376,7 +384,7 @@ static gavl_source_status_t process_stream_video(gavftools_stream_t * s)
   return GAVL_SOURCE_OK;
   }
 
-static gavl_source_status_t process_stream_video_discont(gavftools_stream_t * s)
+gavl_source_status_t gavftools_process_stream_video_discont(gavftools_stream_t * s)
   {
   gavl_source_status_t src_st;
   int64_t pts;
@@ -418,7 +426,7 @@ static gavl_source_status_t process_stream_video_discont(gavftools_stream_t * s)
   return GAVL_SOURCE_OK;
   }
 
-static gavl_source_status_t process_stream_packet(gavftools_stream_t * s)
+gavl_source_status_t gavftools_process_stream_packet(gavftools_stream_t * s)
   {
   gavl_packet_t * packet = gavl_packet_sink_get_packet(s->psink);
   gavl_source_status_t src_st;
@@ -439,11 +447,33 @@ static gavl_source_status_t process_stream_packet(gavftools_stream_t * s)
   
   if(gavl_packet_sink_put_packet(s->psink, packet) != GAVL_SINK_OK)
     return GAVL_SOURCE_EOF;
+
+#if 0  
+  if(s->flags & STREAM_B_FRAMES)
+    {
+    /* Flush earlier B-frames, which come before this one in presentation order */
+
+    while(1)
+      {
+      
+      src_st = gavl_packet_source_peek_packet(s->src->psrc, &packet);
+      if(src_st != GAVL_SOURCE_OK)
+        break;
+      if(packet->pts < pts)
+        {
+        gavl_packet_source_read_packet(s->src->psrc, &packet);
+        }
+
+      }
+    
+    
+    }
+#endif
   
   return GAVL_SOURCE_OK;
   }
 
-static gavl_source_status_t process_stream_packet_discont(gavftools_stream_t * s)
+gavl_source_status_t gavftools_process_stream_packet_discont(gavftools_stream_t * s)
   {
   gavl_source_status_t src_st;
   int64_t pts;
@@ -552,7 +582,7 @@ int gavftools_init_sink(bg_media_source_t * src)
       {
       const gavl_audio_format_t * fmt =  gavl_audio_sink_get_format(gavftools_streams[idx].asink);
 
-      gavftools_streams[idx].process = process_stream_audio;
+      gavftools_streams[idx].process = gavftools_process_stream_audio;
       gavftools_streams[idx].timescale = fmt->samplerate;
 
       gavl_audio_source_set_dst(gavftools_streams[idx].src->asrc, 0, fmt);
@@ -563,9 +593,9 @@ int gavftools_init_sink(bg_media_source_t * src)
       const gavl_video_format_t * fmt =  gavl_video_sink_get_format(gavftools_streams[idx].vsink);
 
       if(gavftools_streams[idx].flags & STREAM_DISCONT)
-        gavftools_streams[idx].process = process_stream_video_discont;
+        gavftools_streams[idx].process = gavftools_process_stream_video_discont;
       else
-        gavftools_streams[idx].process = process_stream_video;
+        gavftools_streams[idx].process = gavftools_process_stream_video;
 
       gavftools_streams[idx].timescale = fmt->timescale;
 
@@ -585,10 +615,20 @@ int gavftools_init_sink(bg_media_source_t * src)
       {
       gavftools_streams[idx].psink = gavf_writer_get_packet_sink(gavftools_writer, idx);
 
+      if(gavftools_streams[idx].src->type == GAVL_STREAM_VIDEO)
+        {
+        gavl_compression_info_t ci;
+        gavl_compression_info_init(&ci);
+        if(gavl_stream_get_compression_info(gavftools_streams[idx].src->s, &ci) &&
+           (ci.flags & GAVL_COMPRESSION_HAS_B_FRAMES))
+          gavftools_streams[idx].flags |= STREAM_B_FRAMES;
+        gavl_compression_info_free(&ci);
+        }
+      
       if(gavftools_streams[idx].flags & STREAM_DISCONT)
-        gavftools_streams[idx].process = process_stream_packet_discont;
+        gavftools_streams[idx].process = gavftools_process_stream_packet_discont;
       else
-        gavftools_streams[idx].process = process_stream_packet;
+        gavftools_streams[idx].process = gavftools_process_stream_packet;
       
       if(!gavl_dictionary_get_int(gavl_stream_get_metadata(gavftools_streams[idx].src->s),
                                   GAVL_META_STREAM_SAMPLE_TIMESCALE,
