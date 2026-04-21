@@ -260,6 +260,8 @@ static int init_encoder(void)
         }
         break;
       case GAVL_STREAM_MSG:
+        if(encoder_plugin->add_msg_stream)
+          st->action = BG_STREAM_ACTION_DECODE;
         break;
       case GAVL_STREAM_NONE:
         break;
@@ -271,8 +273,11 @@ static int init_encoder(void)
     
     }
 
-
-  /* Start source, streate streams */
+  bg_media_source_set_msg_action_by_id(gavftools_src,
+                                       GAVL_META_STREAM_ID_MSG_PROGRAM,
+                                       BG_STREAM_ACTION_DECODE);
+  
+  /* Start source, create streams */
   bg_input_plugin_start(gavftools_input_handle);
   gavftools_streams = calloc(num_gavftools_streams, sizeof(*gavftools_streams));
   idx = 0;
@@ -337,6 +342,7 @@ static int init_encoder(void)
           gavl_compression_info_free(&ci);
           gavftools_streams[idx].process = gavftools_process_stream_packet;
           }
+        idx++;
         break;
       case GAVL_STREAM_VIDEO:
       case GAVL_STREAM_OVERLAY:
@@ -430,6 +436,7 @@ static int init_encoder(void)
             }
           gavl_compression_info_free(&ci);
           }
+        idx++;
         break;
       case GAVL_STREAM_TEXT:
         {
@@ -446,14 +453,23 @@ static int init_encoder(void)
           encoder_plugin->add_text_stream(encoder_handle->priv,
                                           m, (uint32_t*)&gavftools_streams[idx].timescale);
         gavftools_streams[idx].process = gavftools_process_stream_packet_discont;
+        idx++;
         }
         break;
       case GAVL_STREAM_MSG:
+        {
+        if(encoder_plugin->add_msg_stream && st->msghub)
+          {
+          bg_msg_sink_t * sink =
+            encoder_plugin->add_msg_stream(encoder_handle->priv,
+                                           GAVL_META_STREAM_ID_MSG_PROGRAM);
+          bg_msg_hub_connect_sink(st->msghub, sink);
+          }
+        }
         break;
       case GAVL_STREAM_NONE:
         break;
       }
-    idx++;
     }
 
   encoder_plugin->start(encoder_handle->priv);
