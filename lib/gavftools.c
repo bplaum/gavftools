@@ -23,13 +23,15 @@ bg_input_plugin_t * gavftools_input_plugin = NULL;
 gavf_writer_t * gavftools_writer = NULL;
 
 
-int num_gavftools_streams = 0;
-gavftools_stream_t * gavftools_streams = NULL;
+//int num_gavftools_streams = 0;
+// gavftools_stream_t * gavftools_streams = NULL;
 
 static pthread_mutex_t out_time_mutex = PTHREAD_MUTEX_INITIALIZER;
 static gavl_time_t out_time = GAVL_TIME_UNDEFINED;
 
 static gavftools_thread_t gavftools_thread = { 0 };
+
+bg_media_source_t gavftools_encoder = { 0 };
 
 /* Used for gavtools_start() */
 pthread_barrier_t gavftools_barrier;
@@ -515,133 +517,41 @@ gavl_source_status_t gavftools_process_stream_packet_discont(gavftools_stream_t 
   return GAVL_SOURCE_OK;
   }
 
-static int gavftools_eof(void)
-  {
-  int ret = 1;
-  int i;
-
-  if(gavftools_flags & GAVFTOOLS_MULTI_THREAD)
-    {
-    for(i = 0; i < num_gavftools_streams; i++)
-      {
-      pthread_mutex_lock(&gavftools_streams[i].thread.mutex);
-      if(gavftools_streams[i].thread.state != THREAD_STATE_EOF)
-        ret = 0;
-      pthread_mutex_unlock(&gavftools_streams[i].thread.mutex);
-
-      if(!ret)
-        break;
-      }
-    }
-  else
-    {
-    pthread_mutex_lock(&gavftools_thread.mutex);
-    if(gavftools_thread.state != THREAD_STATE_EOF)
-      ret = 0;
-    pthread_mutex_unlock(&gavftools_thread.mutex);
-    
-    }
-  
-  return ret;
-  }
 
 int gavftools_init_sink(bg_media_source_t * src)
   {
   int i = 0;
-  int idx;
-  
+  int idx = 0;
+  bg_encoder_stream_t * s;
+  bg_media_source_stream_t * st;
+
   if(!gavf_writer_init(gavftools_writer, src))
     {
     return 0;
     }
-  
-  /* Initialize connector */
-  for(i = 0; i < src->num_streams; i++)
+
+  bg_media_source_set_from_source(&gavftools_encoder, src);
+
+  /* Set up streams and sinks */
+
+  for(i = 0; i < gavftools_encoder.num_streams; i++)
     {
-    if((src->streams[i]->action != BG_STREAM_ACTION_OFF) &&
-       (src->streams[i]->type != GAVL_STREAM_MSG))
-      num_gavftools_streams++;
-    }
-  gavftools_streams = calloc(num_gavftools_streams, sizeof(*gavftools_streams));
-  idx = 0;
-  
-  for(i = 0; i < src->num_streams; i++)
-    {
-    if((src->streams[i]->action == BG_STREAM_ACTION_OFF) ||
-       (src->streams[i]->type == GAVL_STREAM_MSG))
+    st = gavftools_encoder.streams[i];
+    if((st->action == BG_STREAM_ACTION_OFF) ||
+       (st->type == GAVL_STREAM_MSG))
       continue;
+
+    s = bg_encoder_stream_create(&gavftools_encoder, st);
+    s->asink = gavf_writer_get_audio_sink(gavftools_writer, idx);
+    s->vsink = gavf_writer_get_video_sink(gavftools_writer, idx);
+    s->psink = gavf_writer_get_packet_sink(gavftools_writer, idx);
     
-    gavftools_streams[idx].last_status = GAVL_SOURCE_OK;
-    
-    if(!gavl_stream_is_continuous(src->streams[i]->s))
-      gavftools_streams[idx].flags |= STREAM_DISCONT;
-    
-    gavftools_streams[idx].src = src->streams[i];
-
-    if((gavftools_streams[idx].asink = gavf_writer_get_audio_sink(gavftools_writer, idx)))
-      {
-      const gavl_audio_format_t * fmt =  gavl_audio_sink_get_format(gavftools_streams[idx].asink);
-
-      gavftools_streams[idx].process = gavftools_process_stream_audio;
-      gavftools_streams[idx].timescale = fmt->samplerate;
-
-      gavl_audio_source_set_dst(gavftools_streams[idx].src->asrc, 0, fmt);
-      
-      }
-    else if((gavftools_streams[idx].vsink = gavf_writer_get_video_sink(gavftools_writer, idx)))
-      {
-      const gavl_video_format_t * fmt =  gavl_video_sink_get_format(gavftools_streams[idx].vsink);
-
-      if(gavftools_streams[idx].flags & STREAM_DISCONT)
-        gavftools_streams[idx].process = gavftools_process_stream_video_discont;
-      else
-        gavftools_streams[idx].process = gavftools_process_stream_video;
-
-      gavftools_streams[idx].timescale = fmt->timescale;
-
-      gavl_video_source_set_dst(gavftools_streams[idx].src->vsrc, 0, fmt);
-
-      }
-    else if((gavftools_streams[idx].msink = gavf_writer_get_message_sink(gavftools_writer, idx)))
-      {
-      if(!gavl_dictionary_get_int(gavl_stream_get_metadata(gavftools_streams[idx].src->s),
-                                  GAVL_META_STREAM_SAMPLE_TIMESCALE,
-                                  &gavftools_streams[idx].timescale))
-        {
-        gavftools_streams[idx].timescale = GAVL_TIME_SCALE;
-        }
-      }
-    else
-      {
-      gavftools_streams[idx].psink = gavf_writer_get_packet_sink(gavftools_writer, idx);
-
-      if(gavftools_streams[idx].src->type == GAVL_STREAM_VIDEO)
-        {
-        gavl_compression_info_t ci;
-        gavl_compression_info_init(&ci);
-        if(gavl_stream_get_compression_info(gavftools_streams[idx].src->s, &ci) &&
-           (ci.flags & GAVL_COMPRESSION_HAS_B_FRAMES))
-          gavftools_streams[idx].flags |= STREAM_B_FRAMES;
-        gavl_compression_info_free(&ci);
-        }
-      
-      if(gavftools_streams[idx].flags & STREAM_DISCONT)
-        gavftools_streams[idx].process = gavftools_process_stream_packet_discont;
-      else
-        gavftools_streams[idx].process = gavftools_process_stream_packet;
-      
-      if(!gavl_dictionary_get_int(gavl_stream_get_metadata(gavftools_streams[idx].src->s),
-                                  GAVL_META_STREAM_SAMPLE_TIMESCALE,
-                                  &gavftools_streams[idx].timescale))
-        {
-        gavftools_streams[idx].timescale = GAVL_TIME_SCALE;
-        }
-      }
-    
-    gavftools_streams[idx].time = GAVL_TIME_UNDEFINED;
-    gavftools_streams[idx].time_scaled = GAVL_TIME_UNDEFINED;
     idx++;
     }
+  
+  
+  bg_media_encoder_finalize(&gavftools_encoder);
+ 
   
   return 1;
   }
@@ -723,64 +633,6 @@ gavl_source_status_t gavftools_iteration_multithread(void * data)
   return process_stream(data);
   }
 
-gavl_source_status_t gavftools_iteration_singlethread(void * data)
-  {
-  int i;
-  int num_eof = 0;
-  gavftools_stream_t * mux_str = NULL;
-  gavl_time_t min_time = GAVL_TIME_UNDEFINED;
-  
-  for(i = 0; i < num_gavftools_streams; i++)
-    {
-    if(gavftools_streams[i].last_status == GAVL_SOURCE_EOF)
-      {
-      num_eof++;
-      continue;
-      }
-    if((gavftools_streams[i].flags & STREAM_DISCONT)  ||
-       (gavftools_streams[i].time_scaled == GAVL_TIME_UNDEFINED))
-      {
-      if(process_stream(&gavftools_streams[i]) == GAVL_SOURCE_EOF)
-        num_eof++;
-      }
-    }
-  if(num_gavftools_streams == num_eof)
-    {
-    fprintf(stderr, "EOF 1\n");
-    return GAVL_SOURCE_EOF;
-    }
-  /* Get stream with smallest timestamp */
-  for(i = 0; i < num_gavftools_streams; i++)
-    {
-    if(gavftools_streams[i].flags & STREAM_DISCONT)
-      continue;
-    
-    if(gavftools_streams[i].time == GAVL_TIME_UNDEFINED)
-      continue; /* Should never happen */
-
-    if(gavftools_streams[i].last_status == GAVL_SOURCE_EOF)
-      continue; 
-    
-    if((min_time == GAVL_TIME_UNDEFINED) ||
-       (gavftools_streams[i].time < min_time))
-      {
-      mux_str = &gavftools_streams[i];
-      min_time = gavftools_streams[i].time;
-      }
-    }
-  
-  if(mux_str && (process_stream(mux_str) == GAVL_SOURCE_EOF))
-    {
-    num_eof++;
-    if(num_gavftools_streams == num_eof)
-      {
-      //      fprintf(stderr, "EOF 2\n");
-      return GAVL_SOURCE_EOF;
-      }
-    }
-
-  return GAVL_SOURCE_OK;
-  }
 
 void gavftools_cleanup(void)
   {
@@ -799,8 +651,9 @@ void gavftools_cleanup(void)
   gavl_array_reset(&audio_buffer_formats);
   gavl_array_reset(&video_buffer_formats);
 
-  if(gavftools_streams)
-    free(gavftools_streams);
+
+  bg_media_source_cleanup(&gavftools_encoder);
+  
   
   bg_global_cleanup();
   }
@@ -808,12 +661,8 @@ void gavftools_cleanup(void)
 static void * thread_func(void * data)
   {
   gavftools_thread_t * th = data;
-
   
   gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Started processing thread");
-
-  if(gavftools_flags & GAVFTOOLS_MULTI_THREAD)
-    pthread_barrier_wait(&gavftools_barrier);
   
   while(1)
     {
@@ -824,8 +673,10 @@ static void * thread_func(void * data)
       break;
       }
     pthread_mutex_unlock(&th->mutex);
+
     
-    if(th->process_func(th->data) == GAVL_SOURCE_EOF)
+    
+    if(bg_media_encoder_process(&gavftools_encoder, NULL) == GAVL_SOURCE_EOF)
       {
       pthread_mutex_lock(&th->mutex);
       th->state = THREAD_STATE_EOF;
@@ -881,25 +732,10 @@ void gavftools_start(void)
   {
   if(gavftools_flags & GAVFTOOLS_MULTI_THREAD)
     {
-    int i;
-
-    pthread_barrier_init(&gavftools_barrier, NULL, num_gavftools_streams + 1);
-    
-    for(i = 0; i < num_gavftools_streams; i++)
-      {
-      gavftools_streams[i].thread.process_func = gavftools_iteration_multithread;
-      gavftools_streams[i].thread.data = &gavftools_streams[i];
-      pthread_mutex_init(&gavftools_streams[i].thread.mutex, NULL);
-      thread_start(&gavftools_streams[i].thread);
-      }
-    /* Fire up threads */
-    pthread_barrier_wait(&gavftools_barrier);
-    
-    pthread_barrier_destroy(&gavftools_barrier);
+    bg_media_encoder_start(&gavftools_encoder);
     }
   else
     {
-    gavftools_thread.process_func = gavftools_iteration_singlethread;
     pthread_mutex_init(&gavftools_thread.mutex, 0);
     thread_start(&gavftools_thread);
     }
@@ -909,13 +745,7 @@ void gavftools_stop(void)
   {
   if(gavftools_flags & GAVFTOOLS_MULTI_THREAD)
     {
-    int i;
-    for(i = 0; i < num_gavftools_streams; i++)
-      {
-      fprintf(stderr, "Stopping thread %d\n", i);
-      thread_stop(&gavftools_streams[i].thread);
-      fprintf(stderr, "Stopped thread %d\n", i);
-      }
+    bg_media_encoder_stop(&gavftools_encoder);
     }
   else
     {
@@ -955,7 +785,7 @@ void gavftools_run(void)
       }
     
     /* Check for EOF */
-    if(gavftools_eof())
+    if(bg_media_encoder_eof(&gavftools_encoder))
       break;
     
     if(!result) // Idle

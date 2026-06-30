@@ -35,6 +35,8 @@ extern char * gavftools_dst_location;
 extern bg_media_source_t * gavftools_src;
 extern bg_plugin_handle_t * gavftools_input_handle;
 
+extern bg_media_source_t gavftools_encoder;
+
 /* Codec options */
 extern char * gavftools_ac_options;
 extern char * gavftools_vc_options;
@@ -91,8 +93,8 @@ typedef struct gavftools_stream_s
   int out_idx;
   } gavftools_stream_t;
 
-extern int num_gavftools_streams;
-extern gavftools_stream_t * gavftools_streams;
+// extern int num_gavftools_streams;
+// extern gavftools_stream_t * gavftools_streams;
 
 gavl_source_status_t gavftools_process_stream_audio(gavftools_stream_t * s);
 gavl_source_status_t gavftools_process_stream_video(gavftools_stream_t * s);
@@ -113,7 +115,7 @@ int gavftools_handle_sink_message(gavl_msg_t * msg);
 
 void gavftools_cleanup(void);
 
-gavl_source_status_t gavftools_iteration_singlethread(void * data);
+// gavl_source_status_t gavftools_iteration_singlethread(void * data);
 gavl_source_status_t gavftools_iteration_multithread(void * data);
 
 void gavftools_start(void);
