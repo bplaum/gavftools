@@ -75,6 +75,8 @@ static void set_stream_actions_auto(gavl_stream_type_t type)
   {
   int i, num;
   bg_media_source_stream_t * s;
+
+  //  fprintf(stderr, "set_stream_actions_auto %s\n", gavl_stream_type_name(type));
   
   num = gavl_track_get_num_streams(gavftools_src->track, type);
 
@@ -122,6 +124,8 @@ int gavftools_open_src(void)
   {
   gavl_dictionary_t track;
   int num_variants = 0;
+
+  //  fprintf(stderr, "gavftools_open_src %s\n", gavftools_src_location);
   
   gavl_dictionary_init(&track);
   gavl_track_from_location(&track, gavftools_src_location);
@@ -136,6 +140,14 @@ int gavftools_open_src(void)
   return 1;
   }
 
+void gavftools_set_stream_actions(void)
+  {
+  set_stream_actions_auto(GAVL_STREAM_AUDIO);
+  set_stream_actions_auto(GAVL_STREAM_VIDEO);
+  set_stream_actions_auto(GAVL_STREAM_TEXT);
+  set_stream_actions_auto(GAVL_STREAM_OVERLAY);
+  }
+
 int gavftools_init_src(void)
   {
   gavl_msg_t msg;
@@ -144,6 +156,8 @@ int gavftools_init_src(void)
   if(!gavftools_src_location)
     gavftools_src_location = GAVF_PROTOCOL"://-";
 
+  //  fprintf(stderr, "gavftools_init_src %s\n", gavftools_src_location);
+  
   /* Interactive opening */
   if(gavftools_flags & GAVFTOOLS_OUT_BACKCHANNEL)
     {
@@ -245,20 +259,27 @@ int gavftools_init_src(void)
               }
               break;
             case GAVL_CMD_SRC_START:
+              /*
               fprintf(stderr, "Got start %d %d\n",
                       audio_buffer_formats.num_entries,
                       video_buffer_formats.num_entries);
-
+              */
+              
               /* Try zero copy */
               if(gavftools_flags & GAVFTOOLS_OUT_LOCAL)
                 {
-                fprintf(stderr, "Trying zero copy\n");
+                // fprintf(stderr, "Trying zero copy\n");
                 
                 if(!audio_buffer_formats.num_entries)
+                  {
                   gavl_hw_buf_desc_append(&audio_buffer_formats, GAVL_HW_MEMFD);
+                  // gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Enabling zero copy for audio");
+                  }
                 if(!video_buffer_formats.num_entries)
+                  {
                   gavl_hw_buf_desc_append(&video_buffer_formats, GAVL_HW_MEMFD);
-
+                  // gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Enabling zero copy for video");
+                  }
                 gavl_hw_buf_desc_set_shared(&audio_buffer_formats);
                 gavl_hw_buf_desc_set_shared(&video_buffer_formats);
                 
@@ -311,14 +332,9 @@ int gavftools_init_src(void)
     {
     if(!gavftools_open_src())
       return 0;
-      
-    
-    set_stream_actions_auto(GAVL_STREAM_AUDIO);
-    set_stream_actions_auto(GAVL_STREAM_VIDEO);
-    set_stream_actions_auto(GAVL_STREAM_TEXT);
-    set_stream_actions_auto(GAVL_STREAM_OVERLAY);
-    
 
+    gavftools_set_stream_actions();
+    
     enable_msg_stream();
     
     bg_input_plugin_start(gavftools_input_handle);
@@ -673,8 +689,6 @@ static void * thread_func(void * data)
       break;
       }
     pthread_mutex_unlock(&th->mutex);
-
-    
     
     if(bg_media_encoder_process(&gavftools_encoder, NULL) == GAVL_SOURCE_EOF)
       {

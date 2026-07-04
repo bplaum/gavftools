@@ -99,7 +99,7 @@ static int init_encoder(void)
   
   /* 1st pass: Decide decoding modes */
 
-  if(!bg_media_encoder_init(&gavftools_encoder, encoder_handle))
+  if(!bg_media_encoder_init(gavftools_src, encoder_handle))
     {
     gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "No streams to encode");
     return 0;
@@ -108,6 +108,8 @@ static int init_encoder(void)
   /* Start source, create streams */
   bg_input_plugin_start(gavftools_input_handle);
 
+  /* TODO: Connect message strean */
+  
   if(!bg_media_encoder_connect(&gavftools_encoder,
                                gavftools_src, encoder_handle))
     return 0;
@@ -126,8 +128,17 @@ int main(int argc, char ** argv)
   bg_cmdline_parse(global_options, &argc, &argv, NULL);
 
   /* Open source */
+  if(!gavftools_src_location)
+    gavftools_src_location = GAVF_PROTOCOL"://-";
+
   if(!gavftools_open_src())
     return EXIT_FAILURE;
+
+  /* Set default actions, will be refined by the encoder later on */
+  gavftools_set_stream_actions();
+  
+  //  if(!gavftools_init_src())
+  //    return EXIT_FAILURE;
   
   if(!init_encoder())
     {

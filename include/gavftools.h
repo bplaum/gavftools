@@ -102,6 +102,8 @@ gavl_source_status_t gavftools_process_stream_video_discont(gavftools_stream_t *
 gavl_source_status_t gavftools_process_stream_packet(gavftools_stream_t * s);
 gavl_source_status_t gavftools_process_stream_packet_discont(gavftools_stream_t * s);
 
+void gavftools_set_stream_actions(void);
+
 
 void gavftools_init(void);
 int gavftools_open_sink(void);

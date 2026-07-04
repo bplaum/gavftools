@@ -95,7 +95,7 @@ static void send_stream_action(gavf_reader_t * g,
       gavl_msg_set_id_ns(&msg, GAVL_CMD_SRC_SET_STREAM_ACTION, GAVL_MSG_NS_SRC);
       gavl_msg_set_arg_int(&msg, 0, type);
       gavl_msg_set_arg_int(&msg, 1, i);
-      gavl_msg_set_arg_int(&msg, 2, 1);
+      gavl_msg_set_arg_int(&msg, 2, st->action);
       gavl_msg_write(&msg, g->bkch_io);
       gavl_msg_free(&msg);
       }
@@ -169,8 +169,9 @@ static int start_read(gavf_reader_t * g)
     
     if(ci.id == GAVL_CODEC_ID_NONE)
       {
-      fprintf(stderr, "Uncompressed stream\n");
-
+      gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Got uncompressed %s stream",
+               gavl_stream_type_name(g->src.streams[i]->type));
+      
       switch(g->src.streams[i]->type)
         {
         case GAVL_STREAM_AUDIO:
@@ -1062,7 +1063,7 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
     gavl_compression_info_init(&ci);
     if(gavl_stream_get_compression_info(src->streams[i]->s, &ci))
       {
-      gavl_stream_set_compression_info(g->streams[i].s, &ci);
+      gavl_stream_set_compression_info(g->streams[idx].s, &ci);
       gavl_compression_info_free(&ci);
       }
     
