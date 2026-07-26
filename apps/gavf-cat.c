@@ -39,7 +39,7 @@ int main(int argc, char ** argv)
   gavftools_init();
   
   bg_cmdline_init(&app_data);
-  bg_cmdline_parse(global_options, &argc, &argv, NULL);
+  bg_cmdline_parse(global_options, &argc, &argv);
 
   /* We open the sink before the source */
   if(!gavftools_open_sink())

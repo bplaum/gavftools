@@ -208,8 +208,10 @@ gavl_io_t * gavf_reader_open_io(gavf_reader_t * g, const char * uri1)
   
   /* stdin */
   if(!uri || gavl_string_starts_with(uri, GAVF_PROTOCOL"://-"))
+    {
+    gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Opening stdin"); 
     ret = gavl_io_create_file(stdin, 0, 0, 0);
-  
+    }
   else 
     {
     if(!(ret = open_socket(uri, 0, timeout)))
@@ -254,7 +256,6 @@ gavl_io_t * gavf_writer_open_io(gavf_writer_t * g, const char * uri1)
   char * unix_socket = NULL;
   char * new_addr = NULL;
   
-  
   gavl_dictionary_init(&url_vars);
   
   if(uri1 && gavl_string_starts_with_i(uri1, "file://"))
@@ -262,11 +263,20 @@ gavl_io_t * gavf_writer_open_io(gavf_writer_t * g, const char * uri1)
   
   uri = gavl_strdup(uri1);
 
-  gavl_url_get_vars(uri, &url_vars);
-  gavl_dictionary_get_int(&url_vars, "timeout", &timeout);
+  if(uri)
+    {
+    gavl_url_get_vars(uri, &url_vars);
+    
+    gavl_dictionary_get_int(&url_vars, "timeout", &timeout);
+    
+    }
+
   
   if(!uri || gavl_string_starts_with(uri, GAVF_PROTOCOL"://-"))
+    {
+    gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Opening stdout");
     ret = gavl_io_create_file(stdout, 1, 0, 0);
+    }
   else 
     {
     FILE * f;

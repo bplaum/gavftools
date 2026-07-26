@@ -37,13 +37,13 @@ int main(int argc, char ** argv)
   gavftools_init();
   
   bg_cmdline_init(&app_data);
-  bg_cmdline_parse(global_options, &argc, &argv, NULL);
+  bg_cmdline_parse(global_options, &argc, &argv);
   
   /* Initialize source */
   if(!gavftools_init_src())
     return EXIT_FAILURE;
 
-  fprintf(stderr, "Loaded %s\n", gavftools_src_location);
+  fprintf(stderr, "Loaded %s\n", gavl_dictionary_get_string(&bg_cmdline_options, "i"));
   gavl_dictionary_dump(gavftools_src->track, 2);
   fprintf(stderr, "\n");
   

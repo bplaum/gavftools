@@ -12,7 +12,13 @@
     .arg = "-i",                            \
     .help_arg = "<location>",               \
     .help_string = TRS("Source to decode"), \
-    .argv = &gavftools_src_location,        \
+    .flags = BG_CMDLINE_ARG_STRING,         \
+  },                                        \
+  {                                         \
+    .arg = "-m",                            \
+    .help_arg = "key=val",                  \
+    .help_string = TRS("Set metadata key (can be used multiple times)"), \
+    .flags = BG_CMDLINE_ARG_PARAM,         \
   }
 
 #define GAVFTOOLS_OPT_DST                   \
@@ -20,7 +26,7 @@
     .arg = "-o",                            \
     .help_arg = "<location>",               \
     .help_string = TRS("Destination"),      \
-    .argv = &gavftools_dst_location,        \
+    .flags = BG_CMDLINE_ARG_STRING,         \
   }
 
 #define GAVFTOOLS_OUT_BACKCHANNEL (1<<0)
@@ -29,8 +35,6 @@
 
 extern int gavftools_flags;
 
-extern char * gavftools_src_location;
-extern char * gavftools_dst_location;
 
 extern bg_media_source_t * gavftools_src;
 extern bg_plugin_handle_t * gavftools_input_handle;
@@ -64,43 +68,6 @@ typedef struct
   pthread_t thread;
   } gavftools_thread_t;
 
-typedef struct gavftools_stream_s
-  {
-  bg_media_source_stream_t * src;
-
-  gavl_audio_sink_t * asink;
-  gavl_video_sink_t * vsink;
-  gavl_packet_sink_t * psink;
-  bg_msg_sink_t * msink;
-
-  int timescale;
-  gavl_time_t time;
-  int64_t time_scaled;
-  
-  int flags;
-  
-  gavl_source_status_t last_status;
-  /* Process one packet / frame */
-  gavl_source_status_t (*process)(struct gavftools_stream_s * s);
-
-  /* The following are needed for non-continuous streams only */
-  gavl_packet_t      * pkt;
-  gavl_video_frame_t * vframe;
-
-  gavftools_thread_t thread;
-
-  /* For encoding */
-  int out_idx;
-  } gavftools_stream_t;
-
-// extern int num_gavftools_streams;
-// extern gavftools_stream_t * gavftools_streams;
-
-gavl_source_status_t gavftools_process_stream_audio(gavftools_stream_t * s);
-gavl_source_status_t gavftools_process_stream_video(gavftools_stream_t * s);
-gavl_source_status_t gavftools_process_stream_video_discont(gavftools_stream_t * s);
-gavl_source_status_t gavftools_process_stream_packet(gavftools_stream_t * s);
-gavl_source_status_t gavftools_process_stream_packet_discont(gavftools_stream_t * s);
 
 void gavftools_set_stream_actions(void);
 
@@ -114,6 +81,8 @@ int gavftools_open_src(void);
 int gavftools_init_sink(bg_media_source_t * src);
 int gavftools_handle_sink_message(gavl_msg_t * msg);
 
+/* Set metadata from commandline */
+int gavftools_set_metadata(gavl_dictionary_t * m);
 
 void gavftools_cleanup(void);
 

@@ -86,19 +86,16 @@ static void send_stream_action(gavf_reader_t * g,
 
   for(i = 0; i < num; i++)
     {
+    gavl_msg_t msg;
     st = bg_media_source_get_stream(&g->src, type, i);
 
-    if(st->action != BG_STREAM_ACTION_OFF)
-      {
-      gavl_msg_t msg;
-      gavl_msg_init(&msg);
-      gavl_msg_set_id_ns(&msg, GAVL_CMD_SRC_SET_STREAM_ACTION, GAVL_MSG_NS_SRC);
-      gavl_msg_set_arg_int(&msg, 0, type);
-      gavl_msg_set_arg_int(&msg, 1, i);
-      gavl_msg_set_arg_int(&msg, 2, st->action);
-      gavl_msg_write(&msg, g->bkch_io);
-      gavl_msg_free(&msg);
-      }
+    gavl_msg_init(&msg);
+    gavl_msg_set_id_ns(&msg, GAVL_CMD_SRC_SET_STREAM_ACTION, GAVL_MSG_NS_SRC);
+    gavl_msg_set_arg_int(&msg, 0, type);
+    gavl_msg_set_arg_int(&msg, 1, i);
+    gavl_msg_set_arg_int(&msg, 2, st->action);
+    gavl_msg_write(&msg, g->bkch_io);
+    gavl_msg_free(&msg);
     }
   }
 
@@ -171,6 +168,8 @@ static int start_read(gavf_reader_t * g)
       {
       gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Got uncompressed %s stream",
                gavl_stream_type_name(g->src.streams[i]->type));
+
+      // gavl_dictionary_dump(g->src.streams[i]->s, 2);
       
       switch(g->src.streams[i]->type)
         {
@@ -316,6 +315,7 @@ static int handle_msg_read(void * data, gavl_msg_t * msg)
             send_stream_action(g, GAVL_STREAM_VIDEO);
             send_stream_action(g, GAVL_STREAM_TEXT);
             send_stream_action(g, GAVL_STREAM_OVERLAY);
+            send_stream_action(g, GAVL_STREAM_MSG);
 
             gavl_msg_init(&msg);
             gavl_msg_set_id_ns(&msg, GAVL_CMD_SRC_START, GAVL_MSG_NS_SRC);
@@ -353,11 +353,16 @@ static int handle_msg_read(void * data, gavl_msg_t * msg)
             
             for(i = 0; i < num_streams; i++)
               {
+              int id = 0;
               gavl_compression_info_t ci;
               
-              if(!(src_s = gavl_track_get_stream_all(&track, i)) ||
-                 !(dst_s = gavl_track_get_stream_all_nc(g->src.track, i)))
+              if(!(src_s = gavl_track_get_stream_all(&track, i)))
                 break;
+
+              if(!gavl_stream_get_id(src_s, &id) || 
+                 !(dst_s = gavl_track_find_stream_by_id_nc(g->src.track, id)))
+                continue;
+
               gavl_dictionary_copy_value(dst_s, src_s, HWINFO_KEY);
 
               gavl_compression_info_init(&ci);
@@ -517,7 +522,7 @@ int gavf_reader_open(gavf_reader_t * g, const char * uri)
         }
       else
         {
-#if 1
+#if 0
         fprintf(stderr, "Got media info:\n");
         gavl_dictionary_dump(&g->mi, 2);
         fprintf(stderr, "\n");
@@ -1167,8 +1172,6 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
   if(g->bkch_io)
     {
     gavl_msg_t msg;
-    //    fprintf(stderr, "Sending final track info\n");
-    //    gavl_dictionary_dump(g->track, 2);
     
     /* Send final track info */
     gavl_msg_init(&msg);
@@ -1308,8 +1311,6 @@ int gavf_writer_write_gavf_message(gavf_writer_t * wr, const gavl_msg_t * msg)
   gavl_io_t * sub_io;
   gavl_chunk_t ch;
 
-  //  fprintf(stderr, "gavf_writer_write_gavf_message:\n");
-  //  gavl_msg_dump(msg, 2);
   
   sub_io = gavl_chunk_start_io(wr->io, &ch, GAVF_MSG);
   gavl_msg_write(msg, sub_io);
