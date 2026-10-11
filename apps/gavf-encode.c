@@ -25,20 +25,30 @@ static bg_cmdline_arg_t global_options[] =
   {
     GAVFTOOLS_OPT_SRC,
     GAVFTOOLS_OPT_DST,
-    {                                         \
-      .arg = "-ae",                            \
-      .help_arg = "key=val",                  \
-      .help_string = TRS("Audio encoder options"), \
-      .flags = BG_CMDLINE_ARG_PARAM | BG_CMDLINE_ARG_PER_STREAM,        \
+    BG_STREAM_MODE_AUDIO,
+    {
+      .arg = "-ae",
+      .help_arg = "key=val",
+      .help_string = TRS("Audio encoder options"),
+      .flags = BG_CMDLINE_ARG_PARAM | BG_CMDLINE_ARG_PER_STREAM,
     },
-    {                                         \
-      .arg = "-ve",                            \
-      .help_arg = "key=val",                  \
-      .help_string = TRS("Video encoder options"), \
-      .flags = BG_CMDLINE_ARG_PARAM | BG_CMDLINE_ARG_PER_STREAM,        \
+    BG_STREAM_MODE_VIDEO,
+    {
+      .arg = "-vm",
+      .help_arg = "decode|copy|off",
+      .help_string = TRS("Video stream mode"),
+      .flags = BG_CMDLINE_ARG_STRING | BG_CMDLINE_ARG_PER_STREAM,
     },
-    BG_PLUGIN_OPT_LIST_ENC,                     \
-    BG_PLUGIN_OPT_LIST_OPTIONS,                 \
+    {
+      .arg = "-ve",
+      .help_arg = "key=val",
+      .help_string = TRS("Video encoder options"),
+      .flags = BG_CMDLINE_ARG_PARAM | BG_CMDLINE_ARG_PER_STREAM,
+    },
+    BG_STREAM_MODE_TEXT,
+    BG_STREAM_MODE_OVERLAY,
+    BG_PLUGIN_OPT_LIST_ENC,
+    BG_PLUGIN_OPT_LIST_OPTIONS,
     { /* End */ },
   };
 
@@ -95,15 +105,14 @@ static int setup_encoder_config(const bg_plugin_info_t * info)
       /* Apply commandline */
       gavl_array_init(&arr);
       bg_cmdline_get_stream_params("ae", i, &arr);
-
+      
       
       if(!bg_cmdline_apply_params(section, info->audio_parameters,
                                   &arr))
         return 0;
 
-      fprintf(stderr, "Section\n");
-      gavl_dictionary_dump(section, 2);
-      
+      //      fprintf(stderr, "Section\n");
+      //      gavl_dictionary_dump(section, 2);
       
       gavl_array_free(&arr);
       }
@@ -250,6 +259,10 @@ int main(int argc, char ** argv)
   gavl_dictionary_dump(&bg_cmdline_options, 2);
   fprintf(stderr, "\n");
 #endif
+
+  gavl_dictionary_set_int(&gavftools_src_options,
+                          BG_PLUGIN_PARAM_DECODING_MODE,
+                          BG_PLUGIN_DECODE_TRANSCODE);
   
   if(!gavftools_open_src())
     return EXIT_FAILURE;

@@ -589,7 +589,7 @@ int gavf_create_video_sink(gavf_writer_stream_t * st, const gavl_video_format_t 
           st->vsink = gavl_video_sink_create(NULL, put_video_dmabuf, st, vfmt);
           gavl_hw_ctx_store(vfmt->hwctx, gavf_stream_get_hwinfo_nc(st->s));
           st->hwctx = vfmt->hwctx;
-          //    gavl_dictionary_dump(gavf_stream_get_hwinfo(st->s), 2);
+          gavl_dictionary_dump(gavf_stream_get_hwinfo(st->s), 2);
           return 1;
           break;
         default:

@@ -5,6 +5,7 @@
 #include <gmerlin/pluginregistry.h>
 #include <gmerlin/utils.h>
 #include <gmerlin/cmdline.h>
+#include <gmerlin/bggavl.h>
 
 #include <gavl/hw.h>
 
@@ -36,6 +37,8 @@ pthread_barrier_t gavftools_barrier;
 static gavl_array_t audio_buffer_formats = { 0 };
 static gavl_array_t video_buffer_formats = { 0 };
 
+gavl_dictionary_t gavftools_src_options = { 0 };
+
 
 void gavftools_init()
   {
@@ -47,29 +50,50 @@ void gavftools_init()
   
   }
 
+  
 /* Initialise source */
 
-static void set_stream_actions_auto(gavl_stream_type_t type)
+static void set_stream_actions_auto(gavl_stream_type_t type, const char * opt)
   {
   int i, num;
   bg_media_source_stream_t * s;
-
+  bg_stream_action_t action = BG_STREAM_ACTION_OFF;
+  
   //  fprintf(stderr, "set_stream_actions_auto %s\n", gavl_stream_type_name(type));
+  //  gavl_dictionary_dump(&bg_cmdline_options, 2);
   
   num = gavl_track_get_num_streams(gavftools_src->track, type);
-
+  
   for(i = 0; i < num; i++)
     {
     gavl_compression_info_t ci;
     
     s = bg_media_source_get_stream(gavftools_src, type, i);
     gavl_compression_info_init(&ci);
-    
-    if(gavl_stream_get_compression_info(s->s, &ci) &&
-       (ci.id != GAVL_CODEC_ID_NONE))
-      bg_media_source_set_stream_action(gavftools_src, type, i, BG_STREAM_ACTION_READRAW);
+
+    if(bg_cmdline_get_stream_action(type, i, &action))
+      {
+      if(action == BG_STREAM_ACTION_READRAW)
+         
+        {
+        if(!gavl_stream_get_compression_info(s->s, &ci) ||
+           (ci.id == GAVL_CODEC_ID_NONE))
+          {
+          gavl_log(GAVL_LOG_WARNING, LOG_DOMAIN, "%s stream %d cannot be read compressed",
+                   gavl_stream_type_name(type), i);
+          action = BG_STREAM_ACTION_DECODE;
+          }
+        }
+      bg_media_source_set_stream_action(gavftools_src, type, i, action);
+      }
     else
-      bg_media_source_set_stream_action(gavftools_src, type, i, BG_STREAM_ACTION_DECODE);
+      {
+      if(gavl_stream_get_compression_info(s->s, &ci) &&
+         (ci.id != GAVL_CODEC_ID_NONE))
+        bg_media_source_set_stream_action(gavftools_src, type, i, BG_STREAM_ACTION_READRAW);
+      else
+        bg_media_source_set_stream_action(gavftools_src, type, i, BG_STREAM_ACTION_DECODE);
+      }
     }
   }
 
@@ -100,43 +124,64 @@ static int wait_for_message(gavl_msg_t * msg)
 
 int gavftools_open_src(void)
   {
-  gavl_dictionary_t track;
-  int num_variants = 0;
-
-  const char * gavftools_src_location =
-    gavl_dictionary_get_string(&bg_cmdline_options, "i");
-
-  if(!gavftools_src_location)
-    gavftools_src_location = GAVF_PROTOCOL"://-";
+  const gavl_array_t * src_locations =
+    bg_cmdline_get_params("i");
   
-  //  fprintf(stderr, "gavftools_open_src %s\n", gavftools_src_location);
-  
-  gavl_dictionary_init(&track);
-  gavl_track_from_location(&track, gavftools_src_location);
-  if(!(gavftools_input_handle = bg_load_track(&track, 0, &num_variants)))
+  if(!src_locations || !src_locations->num_entries)
     {
-    gavl_dictionary_free(&track);
-    return 0;
+    gavl_array_t * arr = 
+      bg_cmdline_get_params_wr("i");
+    
+    gavl_string_array_add(arr, GAVF_PROTOCOL"://-");
+
+    src_locations = bg_cmdline_get_params("i");
     }
+  
+  //  fprintf(stderr, "gavftools_open_src %s\n", src_locations);
+
+  if(src_locations->num_entries == 1)
+    {
+    gavl_dictionary_t track;
+    int num_variants = 0;
+    
+    gavl_dictionary_init(&track);
+    gavl_track_from_location(&track, gavl_string_array_get(src_locations, 0));
+
+    gavl_dictionary_copy(bg_track_get_config_nc(&track, BG_TRACK_CONFIG_SRC),
+                         &gavftools_src_options);
+    
+    if(!(gavftools_input_handle = bg_load_track(&track, 0, &num_variants)))
+      {
+      gavl_dictionary_free(&track);
+      return 0;
+      }
+    gavl_dictionary_free(&track);
+    }
+  else
+    {
+    fprintf(stderr, "Multiplexing %d sources\n", src_locations->num_entries);
+    if(!(gavftools_input_handle = bg_input_plugin_load_mux(src_locations, &gavftools_src_options)))
+      return 0;
+    }
+  
   gavftools_input_plugin = (bg_input_plugin_t*)gavftools_input_handle->plugin;
   gavftools_src = gavftools_input_plugin->get_src(gavftools_input_handle->priv);
-  gavl_dictionary_free(&track);
+  
   return 1;
   }
 
 void gavftools_set_stream_actions(void)
   {
-  set_stream_actions_auto(GAVL_STREAM_AUDIO);
-  set_stream_actions_auto(GAVL_STREAM_VIDEO);
-  set_stream_actions_auto(GAVL_STREAM_TEXT);
-  set_stream_actions_auto(GAVL_STREAM_OVERLAY);
+  set_stream_actions_auto(GAVL_STREAM_AUDIO,   "am");
+  set_stream_actions_auto(GAVL_STREAM_VIDEO,   "vm");
+  set_stream_actions_auto(GAVL_STREAM_TEXT,    "tm");
+  set_stream_actions_auto(GAVL_STREAM_OVERLAY, "om");
   }
 
 int gavftools_init_src(void)
   {
   gavl_msg_t msg;
   int done;
-
 
   //  fprintf(stderr, "gavftools_init_src %s\n", gavftools_src_location);
   
@@ -145,14 +190,9 @@ int gavftools_init_src(void)
     {
     gavl_dictionary_t * mi;
 
-    const char * gavftools_src_location =
-      gavl_dictionary_get_string(&bg_cmdline_options, "i");
-  
-    if(!gavftools_src_location)
-      gavftools_src_location = GAVF_PROTOCOL"://-";
+    gavftools_open_src();
+    mi = gavftools_input_plugin->get_media_info(gavftools_input_handle->priv);
     
-    mi = bg_plugin_registry_load_media_info(bg_plugin_reg, gavftools_src_location, 0);
-
     if(!mi)
       return 0;
     
@@ -164,42 +204,24 @@ int gavftools_init_src(void)
          (msg.ID == GAVL_CMD_SRC_SELECT_TRACK))
         {
         int track_idx;
+        /*
         int num_variants;
         char * real_uri = gavl_strdup(gavftools_src_location);
         gavl_dictionary_t track;
         gavl_dictionary_init(&track);
+        */
         
         track_idx = gavl_msg_get_arg_int(&msg, 0);
-        //        fprintf(stderr, "Got select track %d\n", track_idx);
-        
-        if(gavl_get_num_tracks(mi) > 1)
+#if 0
+        if(track_idx != bg_input_plugin_get_track(gavftools_input_handle))
           {
-          gavl_dictionary_t vars;
-          gavl_dictionary_init(&vars);
-          gavl_url_get_vars(real_uri, &vars);
-          gavl_dictionary_set_int(&vars, GAVL_URL_VAR_TRACK, track_idx+1);
-
-          real_uri = gavl_url_append_vars(real_uri, &vars);
-          gavl_dictionary_free(&vars);
-          
-          }
-
-        gavl_track_from_location(&track, gavftools_src_location);
-        
-        if(!(gavftools_input_handle = bg_load_track(&track, 0, &num_variants)))
-          {
-          gavl_dictionary_free(&track);
-          free(real_uri);
-          gavl_dictionary_destroy(mi);
-          gavl_msg_free(&msg);
+          gavl_log(GAVL_LOG_ERROR, LOG_DOMAIN, "Track mismatch: %d != %d",
+                   track_idx, bg_input_plugin_get_track(gavftools_input_handle));
           return 0;
           }
-        
-        free(real_uri);
-        gavl_dictionary_free(&track);
-
-        gavftools_input_plugin = (bg_input_plugin_t*)gavftools_input_handle->plugin;
-        gavftools_src = gavftools_input_plugin->get_src(gavftools_input_handle->priv);
+#else
+        bg_input_plugin_set_track(gavftools_input_handle, track_idx);
+#endif
         gavl_msg_reset(&msg);
         break;
         }
@@ -207,10 +229,7 @@ int gavftools_init_src(void)
       }
 
     if(!gavftools_input_plugin)
-      {
-      gavl_dictionary_destroy(mi);
       return 0;
-      }
     
     /* Set up source */
     done = 0;
@@ -242,11 +261,10 @@ int gavftools_init_src(void)
               }
               break;
             case GAVL_CMD_SRC_START:
-              /*
+              
               fprintf(stderr, "Got start %d %d\n",
                       audio_buffer_formats.num_entries,
                       video_buffer_formats.num_entries);
-              */
               
               /* Try zero copy */
               if(gavftools_flags & GAVFTOOLS_OUT_LOCAL)
@@ -256,12 +274,12 @@ int gavftools_init_src(void)
                 if(!audio_buffer_formats.num_entries)
                   {
                   gavl_hw_buf_desc_append(&audio_buffer_formats, GAVL_HW_MEMFD);
-                  // gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Enabling zero copy for audio");
+                  gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Generating memfd audio frames");
                   }
                 if(!video_buffer_formats.num_entries)
                   {
                   gavl_hw_buf_desc_append(&video_buffer_formats, GAVL_HW_MEMFD);
-                  // gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Enabling zero copy for video");
+                  gavl_log(GAVL_LOG_INFO, LOG_DOMAIN, "Generating memfd video frames");
                   }
                 gavl_hw_buf_desc_set_shared(&audio_buffer_formats);
                 gavl_hw_buf_desc_set_shared(&video_buffer_formats);
@@ -270,6 +288,9 @@ int gavftools_init_src(void)
                                                          &audio_buffer_formats);
                 bg_input_plugin_set_video_buffer_formats(gavftools_input_handle,
                                                          &video_buffer_formats);
+
+                fprintf(stderr, "Video buffer formats");
+                gavl_array_dump(&video_buffer_formats, 2);
                 
                 
                 }
@@ -303,13 +324,8 @@ int gavftools_init_src(void)
       if(done)
         break;
       }
-
-    //    enable_msg_stream();
     
     bg_input_plugin_start(gavftools_input_handle);
-    //    gavl_dictionary_dump(gavftools_src->track, 2);
-    
-    gavl_dictionary_destroy(mi);
     }
   else /* No commands expected, let's initialize the source ourselves */
     {

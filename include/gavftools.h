@@ -1,6 +1,7 @@
 #include <config.h>
 #include <gmerlin/translation.h>
 #include <gmerlin/plugin.h>
+#include <gmerlin/resourcemanager.h>
 #include <gavf.h>
 
 /* Code common to most commadline tools */
@@ -11,15 +12,17 @@
   {                                         \
     .arg = "-i",                            \
     .help_arg = "<location>",               \
-    .help_string = TRS("Source to decode"), \
-    .flags = BG_CMDLINE_ARG_STRING,         \
+    .help_string = TRS("Source to decode (can be used multiple times)"), \
+    .flags = BG_CMDLINE_ARG_STRINGARRAY,    \
   },                                        \
   {                                         \
     .arg = "-m",                            \
     .help_arg = "key=val",                  \
     .help_string = TRS("Set metadata key (can be used multiple times)"), \
     .flags = BG_CMDLINE_ARG_PARAM,         \
-  }
+   },                                   \
+  BG_OPT_LIST_RECORDERS
+
 
 #define GAVFTOOLS_OPT_DST                   \
   {                                         \
@@ -40,6 +43,9 @@ extern bg_media_source_t * gavftools_src;
 extern bg_plugin_handle_t * gavftools_input_handle;
 
 extern bg_media_source_t gavftools_encoder;
+
+extern gavl_dictionary_t gavftools_src_options;
+
 
 /* Codec options */
 extern char * gavftools_ac_options;

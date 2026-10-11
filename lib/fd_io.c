@@ -40,7 +40,7 @@ int gavf_write_hw_buffers(gavl_io_t * io, const gavl_hw_buffer_t * buffers, int 
   int fd;
   int result = 0;
 
-  fprintf(stderr, "gavf_write_hw_buffers\n");
+  //  fprintf(stderr, "gavf_write_hw_buffers\n");
   
   if((fd = gavl_io_get_socket(io)) < 0)
     {

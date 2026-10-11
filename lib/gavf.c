@@ -1085,6 +1085,7 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
           }
         else if(src->streams[i]->psrc)
           {
+#if 0
           /* Check for zero copy */
           if(g->flags & FLAG_LOCAL)
             {
@@ -1094,6 +1095,7 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
             fprintf(stderr, "Got stats:\n");
             gavl_stream_stats_dump(&stats, 2);
             }
+#endif
           
           if(!gavf_create_packet_sink(&g->streams[idx]))
             return 0;
@@ -1116,6 +1118,7 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
           }
         else if(src->streams[i]->psrc)
           {
+#if 0
           /* Check for zero copy */
           if(g->flags & FLAG_LOCAL)
             {
@@ -1125,6 +1128,7 @@ int gavf_writer_init(gavf_writer_t * g, bg_media_source_t * src)
             fprintf(stderr, "Got stats:\n");
             gavl_stream_stats_dump(&stats, 2);
             }
+#endif
           
           gavf_create_packet_sink(&g->streams[idx]);
           gavl_video_format_copy(gavl_stream_get_video_format_nc(g->streams[idx].s),
